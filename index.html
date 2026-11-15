@@ -163,7 +163,10 @@
       .zipbar { margin-top: 16px; }
       .zipbar p { margin: 0; color: var(--sub); font-size: 13.5px; }
       .zipbar .zipmsg { font-family: var(--mono); font-size: 12.5px; min-height: 1.4em; }
+      select { max-width: 100%; }
       .vidctl { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; }
+      .vidctl .grow { flex: 1 1 100%; min-width: 0; }
+      #vidMachine { width: 100%; }
       .vidctl .lab { font-size: 13px; color: var(--sub); }
       .vidstatus { font-family: var(--mono); font-size: 12.5px; color: var(--sub); min-height: 1.4em; margin-top: 8px; }
       #vidOut { width: 100%; background: #000; image-rendering: pixelated; display: block; }
@@ -221,7 +224,7 @@
           <span class="lab" id="vidName">動画が選択されていません</span>
         </div>
         <div class="vidctl">
-          <label class="lab">機種
+          <label class="lab grow">機種
             <select id="vidMachine">
               <option value="msx" selected>MSX2 SCREEN 5（256×212 / 適応16色）</option>
               <option value="st">Atari ST（320×200 / 適応16色）</option>
@@ -1929,7 +1932,13 @@
         vidResult.src = URL.createObjectURL(V.resultBlob);
         vidResult.hidden = false;
         $('vidDl').disabled = false;
-        vStatus('完了: ' + V.resultName + '（' + (V.resultBlob.size / 1048576).toFixed(1) + 'MB / ' + V.frames + 'フレーム変換 / 音声' + (V.audioOn ? 'あり' : 'なし') + '）');
+        var shareHint = '';
+        try {
+          var f0 = new File([V.resultBlob], V.resultName, { type: V.resultBlob.type });
+          if (navigator.canShare && navigator.canShare({ files: [f0] }))
+            shareHint = ' ダウンロードボタンを押すと共有シートが開きます。「ビデオを保存」を選ぶと写真アプリに入ります。';
+        } catch (e) {}
+        vStatus('完了: ' + V.resultName + '（' + (V.resultBlob.size / 1048576).toFixed(1) + 'MB / ' + V.frames + 'フレーム変換 / 音声' + (V.audioOn ? 'あり' : 'なし') + '）' + shareHint);
       }
       function loadVideoFile(file){
         if (V.running) return;
@@ -1972,7 +1981,20 @@
       $('vidStart').addEventListener('click', start);
       $('vidStop').addEventListener('click', finish);
       $('vidDl').addEventListener('click', function(){
-        if (V.resultBlob) downloadBlob(V.resultBlob, V.resultName);
+        if (!V.resultBlob) return;
+        /* On iOS an <a download> lands in the Files app, never in
+           Photos. The share sheet has 「ビデオを保存」, which does
+           save to Photos — prefer it whenever file sharing exists. */
+        var file = null;
+        try { file = new File([V.resultBlob], V.resultName, { type: V.resultBlob.type }); } catch (e) {}
+        if (file && navigator.canShare && navigator.share){
+          var payload = { files: [file] };
+          if (navigator.canShare(payload)){
+            navigator.share(payload).catch(function(){});
+            return;
+          }
+        }
+        downloadBlob(V.resultBlob, V.resultName);
       });
       if (!window.MediaRecorder) vStatus('このブラウザは動画の録画（MediaRecorder）に未対応のため、動画変換を利用できません。');
     })();
