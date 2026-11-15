@@ -1026,14 +1026,10 @@
     /* GitHub Pages 版：トップレベル配信のため、ダウンロードリンクは
        armLink が設定した href + download 属性のまま直接保存される。
        （Muse 共有ページの sandbox 回避策だった別タブ／シート方式は不要） */
-    });
     /* Bundle buttons: assemble the ZIP from the current results, then
        present it through the same save sheet as single files. */
     $('zipOthers').addEventListener('click', function(){
       var btn = this;
-      /* Open the save tab synchronously, before the async ZIP build —
-         after an await the popup would be blocked. Mobile skips the
-         tab and uses the save sheet as before. */
       btn.disabled = true;
       $('zipMsg').textContent = 'ZIPを作成中…';
       Promise.all(['st', 'msx', 'p6', 'pc88'].map(machinePngEntries)).then(function(lists){
