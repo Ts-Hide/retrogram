@@ -167,6 +167,8 @@
       .vidctl .lab { font-size: 13px; color: var(--sub); }
       .vidstatus { font-family: var(--mono); font-size: 12.5px; color: var(--sub); min-height: 1.4em; margin-top: 8px; }
       #vidOut { width: 100%; background: #000; image-rendering: pixelated; display: block; }
+      #vidSrc { width: 220px; max-width: 70%; display: block; margin-top: 6px; background: #000; }
+      #vidSrc:not([src]) { display: none; }
       #vidResult { width: 100%; background: #000; display: block; margin-top: 10px; }
       .vidwrap { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #000; }
       .vidwrap.empty { display: none; }
@@ -240,7 +242,8 @@
         <p class="vidstatus" id="vidStatus"></p>
         <div class="vidwrap empty" id="vidWrap"><canvas id="vidOut" width="768" height="636"></canvas></div>
         <video id="vidResult" controls playsinline hidden></video>
-        <video id="vidSrc" playsinline preload="auto" style="position:absolute;left:-9999px;top:0;width:16px;height:16px"></video>
+        <p class="lab" id="vidSrcLab" hidden>変換元の動画（変換中はここで再生されます）</p>
+        <video id="vidSrc" playsinline preload="auto"></video>
       </section>
       <p class="err" id="loadErr"></p>
 
@@ -1757,6 +1760,59 @@
         if (vidSrc.requestVideoFrameCallback) vidSrc.requestVideoFrameCallback(frameLoop);
         else setTimeout(frameLoop, 33);
       }
+      /* Fallback driver for browsers where requestVideoFrameCallback
+         does not fire for this element: poll currentTime and convert
+         whenever it advances. */
+      function startTicker(){
+        V.lastT = -1;
+        V.timer = setInterval(function(){
+          if (!V.running){ clearInterval(V.timer); V.timer = null; return; }
+          if (vidSrc.ended || vidSrc.currentTime >= Math.min(vidSrc.duration || MAXSEC, MAXSEC) - 0.05){ finish(); return; }
+          if (!vidSrc.paused && vidSrc.currentTime !== V.lastT){
+            V.lastT = vidSrc.currentTime;
+            convertFrame();
+          }
+        }, 40);
+      }
+      function startDrivers(){
+        if (vidSrc.requestVideoFrameCallback){
+          frameLoop();
+          var lastCount = V.frames;
+          V.watch = setInterval(function(){
+            if (!V.running){ clearInterval(V.watch); V.watch = null; return; }
+            if (!vidSrc.paused && !vidSrc.ended && V.frames === lastCount){
+              clearInterval(V.watch); V.watch = null;
+              startTicker(); /* rVFC stalled: switch to polling */
+            }
+            lastCount = V.frames;
+          }, 1200);
+        } else startTicker();
+      }
+      function playAndRun(){
+        var kicked = false;
+        var ok = function(){
+          if (kicked) return; kicked = true;
+          /* Re-decide the palette now that a frame is really decoded
+             (the pre-play grab can come back black on some browsers). */
+          try { decidePalette(); } catch (e) {}
+          vStatus('変換中…（音声: ' + (V.audioOn ? 'あり' : 'なし（このブラウザでは映像のみ録画します）') + '）');
+          startDrivers();
+        };
+        vidSrc.muted = !V.audioOn;
+        var p = null;
+        try { p = vidSrc.play(); } catch (e) {}
+        if (p && p.then) p.then(ok).catch(function(){
+          /* Unmuted playback can be rejected after async setup;
+             retry muted (the recording then carries no audio). */
+          V.audioOn = false;
+          vidSrc.muted = true;
+          var p2 = null;
+          try { p2 = vidSrc.play(); } catch (e) {}
+          if (p2 && p2.then) p2.then(ok).catch(function(err){ finish(); vStatus('再生を開始できませんでした: ' + err.message); });
+          else ok();
+        });
+        else ok();
+      }
       function pickMime(){
         if (!window.MediaRecorder) return '';
         var cands = ['video/mp4;codecs="avc1.640028,mp4a.40.2"', 'video/mp4',
@@ -1796,6 +1852,7 @@
         V.resultBlob = null;
         vidSrc.pause();
         vidSrc.currentTime = 0;
+        vStatus('変換の準備中…');
         var begin = function(){
           decidePalette();
           convertFrame(); /* paint frame 0 so the recording does not start black */
@@ -1814,10 +1871,7 @@
           $('vidStart').disabled = true; $('vidStop').disabled = false;
           $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidPickBtn').disabled = true;
           V.rec.start(250);
-          vidSrc.play().then(function(){
-            vStatus('変換中…（音声: ' + (V.audioOn ? 'あり' : 'なし（このブラウザでは映像のみ録画します）') + '）');
-            frameLoop();
-          }).catch(function(err){ finish(); vStatus('再生を開始できませんでした: ' + err.message); });
+          playAndRun();
         };
         var ready = function(){
           if (vidSrc.readyState >= 2 && !vidSrc.seeking) begin();
@@ -1826,11 +1880,13 @@
               if (vidSrc.readyState >= 2 && !vidSrc.seeking){
                 vidSrc.removeEventListener('seeked', h);
                 vidSrc.removeEventListener('canplay', h);
+                vidSrc.removeEventListener('loadeddata', h);
                 begin();
               }
             };
             vidSrc.addEventListener('seeked', h);
             vidSrc.addEventListener('canplay', h);
+            vidSrc.addEventListener('loadeddata', h);
           }
         };
         ready();
@@ -1838,6 +1894,8 @@
       function finish(){
         if (!V.running) return;
         V.running = false;
+        if (V.timer){ clearInterval(V.timer); V.timer = null; }
+        if (V.watch){ clearInterval(V.watch); V.watch = null; }
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
         $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidPickBtn').disabled = false;
@@ -1863,6 +1921,7 @@
         V.name = file.name;
         V.stem = stemOf(file.name);
         vidSrc.src = V.url;
+        $('vidSrcLab').hidden = false;
         $('vidName').textContent = file.name + '（' + (file.size / 1048576).toFixed(1) + 'MB）';
         vidResult.hidden = true;
         $('vidDl').disabled = true;
@@ -1874,7 +1933,8 @@
         var d = vidSrc.duration || 0;
         $('vidStart').disabled = false;
         vStatus('準備完了: ' + vidSrc.videoWidth + '×' + vidSrc.videoHeight + ' / ' + d.toFixed(1) + '秒' +
-          (d > MAXSEC ? '（先頭' + MAXSEC + '秒まで変換します）' : ''));
+          (d > MAXSEC ? '（先頭' + MAXSEC + '秒まで変換します）' : '') +
+          (!window.MediaRecorder ? ' ※このブラウザは録画（MediaRecorder）に未対応のため変換できません' : ''));
         document.getElementById('card-vid').scrollIntoView({ block: 'nearest' });
       });
       vidSrc.addEventListener('ended', function(){ if (V.running) finish(); });
