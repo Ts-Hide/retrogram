@@ -1800,31 +1800,6 @@
           }, 1200);
         } else startTicker();
       }
-      function playAndRun(){
-        var kicked = false;
-        var ok = function(){
-          if (kicked) return; kicked = true;
-          /* Re-decide the palette now that a frame is really decoded
-             (the pre-play grab can come back black on some browsers). */
-          try { decidePalette(); } catch (e) {}
-          vStatus('変換中…（音声: ' + (V.audioOn ? 'あり' : 'なし（このブラウザでは映像のみ録画します）') + '）');
-          startDrivers();
-        };
-        vidSrc.muted = !V.audioOn;
-        var p = null;
-        try { p = vidSrc.play(); } catch (e) {}
-        if (p && p.then) p.then(ok).catch(function(){
-          /* Unmuted playback can be rejected after async setup;
-             retry muted (the recording then carries no audio). */
-          V.audioOn = false;
-          vidSrc.muted = true;
-          var p2 = null;
-          try { p2 = vidSrc.play(); } catch (e) {}
-          if (p2 && p2.then) p2.then(ok).catch(function(err){ finish(); vStatus('再生を開始できませんでした: ' + err.message); });
-          else ok();
-        });
-        else ok();
-      }
       function pickMime(){
         if (!window.MediaRecorder) return '';
         var cands = ['video/mp4;codecs="avc1.640028,mp4a.40.2"', 'video/mp4',
@@ -1852,6 +1827,32 @@
           return true;
         } catch (e) { return false; }
       }
+      function abortStart(msg){
+        V.running = false;
+        vidSrc.pause();
+        $('vidStart').disabled = false; $('vidStop').disabled = true;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidWrap').classList.add('empty');
+        vStatus(msg);
+      }
+      function setupAndRecord(){
+        decidePalette();
+        convertFrame(); /* paint the current frame so the recording does not start black */
+        var stream = vidOut.captureStream(30);
+        V.audioOn = V.forceMuted ? false : setupAudio(stream);
+        if (!V.audioOn) vidSrc.muted = true;
+        V.mime = pickMime();
+        V.chunks = [];
+        try {
+          V.rec = new MediaRecorder(stream, V.mime ? { mimeType: V.mime, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
+        } catch (e) { abortStart('録画を開始できませんでした: ' + e.message); return; }
+        V.rec.ondataavailable = function(ev){ if (ev.data && ev.data.size) V.chunks.push(ev.data); };
+        V.rec.onstop = finalize;
+        V.frames = 0;
+        V.rec.start(250);
+        vStatus('変換中…（音声: ' + (V.audioOn ? 'あり' : 'なし（このブラウザでは映像のみ録画します）') + '）');
+        startDrivers();
+      }
       function start(){
         if (!vidSrc.src || V.running) return;
         if (!window.MediaRecorder){ vStatus('このブラウザは動画の録画（MediaRecorder）に未対応のため、動画変換を利用できません。'); return; }
@@ -1862,78 +1863,53 @@
         vidResult.hidden = true;
         $('vidDl').disabled = true;
         V.resultBlob = null;
-        vidSrc.pause();
-        vStatus('映像の取り込みを確認中…');
-        var begin = function(){
-          decidePalette();
-          convertFrame(); /* paint frame 0 so the recording does not start black */
-          var stream = vidOut.captureStream(30);
-          V.audioOn = setupAudio(stream);
-          vidSrc.muted = !V.audioOn;
-          V.mime = pickMime();
-          V.chunks = [];
-          try {
-            V.rec = new MediaRecorder(stream, V.mime ? { mimeType: V.mime, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
-          } catch (e) { vStatus('録画を開始できませんでした: ' + e.message); return; }
-          V.rec.ondataavailable = function(ev){ if (ev.data && ev.data.size) V.chunks.push(ev.data); };
-          V.rec.onstop = finalize;
-          V.frames = 0;
-          V.running = true;
-          $('vidStart').disabled = true; $('vidStop').disabled = false;
-          $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidPickBtn').disabled = true;
-          V.rec.start(250);
-          playAndRun();
+        V.forceMuted = false;
+        V.running = true;
+        $('vidStart').disabled = true; $('vidStop').disabled = false;
+        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidPickBtn').disabled = true;
+        vStatus('再生を開始中…');
+        /* iOS only decodes frames for a *playing* video: a paused
+           element sits at readyState < 2 forever and every canvas
+           grab comes back black. So play first — synchronously in
+           the tap handler, while the user activation still holds —
+           verify capture with a live grab, then seek back to 0
+           while still playing, and only then start recording. */
+        if (vidSrc.ended || (vidSrc.duration && vidSrc.currentTime > vidSrc.duration - 0.3)){
+          try { vidSrc.currentTime = 0; } catch (e) {}
+        }
+        vidSrc.muted = false;
+        var afterPlay = function(){
+          setTimeout(function(){
+            if (!V.running) return;
+            var base = null;
+            try { base = grabBase(); } catch (e) {}
+            if (base && grabMax(base) < 10){
+              abortStart('映像を取り込めていません（真っ黒なフレームしか得られませんでした）。変換元の動画が画面に見えている状態で、もう一度「変換開始」を押してください。');
+              return;
+            }
+            vStatus('変換の準備中…');
+            var goOnce = false;
+            var go = function(){ if (goOnce || !V.running) return; goOnce = true; setupAndRecord(); };
+            if (vidSrc.currentTime > 0.3){
+              var onSeek = function(){ vidSrc.removeEventListener('seeked', onSeek); go(); };
+              vidSrc.addEventListener('seeked', onSeek);
+              try { vidSrc.currentTime = 0; }
+              catch (e) { vidSrc.removeEventListener('seeked', onSeek); go(); return; }
+              setTimeout(function(){ vidSrc.removeEventListener('seeked', onSeek); go(); }, 2500);
+            } else go();
+          }, 450);
         };
-        var ready = function(){
-          if (vidSrc.readyState >= 2 && !vidSrc.seeking) begin();
-          else {
-            var h = function(){
-              if (vidSrc.readyState >= 2 && !vidSrc.seeking){
-                vidSrc.removeEventListener('seeked', h);
-                vidSrc.removeEventListener('canplay', h);
-                vidSrc.removeEventListener('loadeddata', h);
-                begin();
-              }
-            };
-            vidSrc.addEventListener('seeked', h);
-            vidSrc.addEventListener('canplay', h);
-            vidSrc.addEventListener('loadeddata', h);
-          }
-        };
-        var proceed = function(){
-          vidSrc.currentTime = 0;
-          vStatus('変換の準備中…');
-          ready();
-        };
-        preflight(function(okCap){
-          if (!okCap){
-            $('vidWrap').classList.add('empty');
-            vStatus('映像を取り込めていません（真っ黒なフレームしか得られませんでした）。変換元の動画が画面に見えている状態で、もう一度「変換開始」を押してください。');
-            return;
-          }
-          proceed();
+        var p = null;
+        try { p = vidSrc.play(); } catch (e) {}
+        if (p && p.then) p.then(afterPlay).catch(function(){
+          V.forceMuted = true;
+          vidSrc.muted = true;
+          var p2 = null;
+          try { p2 = vidSrc.play(); } catch (e) {}
+          if (p2 && p2.then) p2.then(afterPlay).catch(function(err){ abortStart('再生を開始できませんでした: ' + err.message); });
+          else afterPlay();
         });
-      }
-      /* Seek to a mid-video frame and verify that capturing the video
-         element yields a non-black image on this browser. Some
-         browsers return black frames while the video element is
-         off-screen; without this check the whole recording would
-         silently come out black. */
-      function preflight(done){
-        var target = Math.min((vidSrc.duration || 0) * 0.25, 5);
-        if (!isFinite(target) || target <= 0.2 || vidSrc.readyState < 2){ done(true); return; }
-        var called = false;
-        var finishCheck = function(ok){ if (!called){ called = true; done(ok); } };
-        var onSeek = function(){
-          vidSrc.removeEventListener('seeked', onSeek);
-          var base = null;
-          try { base = grabBase(); } catch (e) {}
-          finishCheck(!base || grabMax(base) >= 10);
-        };
-        vidSrc.addEventListener('seeked', onSeek);
-        try { vidSrc.currentTime = target; }
-        catch (e) { vidSrc.removeEventListener('seeked', onSeek); finishCheck(true); return; }
-        setTimeout(function(){ vidSrc.removeEventListener('seeked', onSeek); finishCheck(true); }, 2000);
+        else afterPlay();
       }
       function finish(){
         if (!V.running) return;
