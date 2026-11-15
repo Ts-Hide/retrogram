@@ -188,6 +188,7 @@
         <p class="big">画像・動画をここにドロップ</p>
         <div class="row">
           <button type="button" class="primary" id="pickBtn">画像を選ぶ</button>
+          <button type="button" class="primary" id="pickVidBtn">動画を選ぶ</button>
           <input type="file" id="file" accept="image/*" />
           <span class="sep">または このページに貼り付け（Ctrl/⌘+V）</span>
         </div>
@@ -1881,6 +1882,8 @@
         if (V.name) vStatus('動画を読み込めませんでした。対応形式の動画でお試しください。');
       });
       $('vidPickBtn').addEventListener('click', function(){ $('vidFile').click(); });
+      var topVidBtn = $('pickVidBtn');
+      if (topVidBtn) topVidBtn.addEventListener('click', function(){ $('vidFile').click(); });
       $('vidFile').addEventListener('change', function(){
         if (this.files && this.files[0]) loadVideoFile(this.files[0]);
         this.value = '';
