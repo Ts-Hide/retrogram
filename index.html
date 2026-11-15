@@ -193,6 +193,15 @@
           <button type="button" id="sampleStill">5.静物</button>
         </div>
       </section>
+      <section class="card zipbar">
+        <header><h2>まとめてZIPで保存</h2></header>
+        <p>変換結果をまとめて1つのZIPファイルにします。ボタンを押すとZIPファイルがそのままダウンロードされるので、個別に何度も保存する代わりに一括で受け取れます。</p>
+        <div class="dl">
+          <button type="button" class="primary" id="zipOthers" disabled>全ての機種をまとめてZIPで保存（ファミコン除く）</button>
+          <button type="button" class="primary" id="zipFc" disabled>ファミコン一式をZIPで保存（PNG 2点＋.nes＋CHR/NT/ATTR/PAL）</button>
+        </div>
+        <p class="zipmsg" id="zipMsg"></p>
+      </section>
       <p class="err" id="loadErr"></p>
 
       <figure class="src" id="srcFig">
@@ -288,15 +297,7 @@
         </section>
       </div>
 
-      <section class="card zipbar">
-        <header><h2>まとめてZIPで保存</h2></header>
-        <p>変換結果をまとめて1つのZIPファイルにします。ボタンを押すとZIPファイルがそのままダウンロードされるので、個別に何度も保存する代わりに一括で受け取れます。</p>
-        <div class="dl">
-          <button type="button" class="primary" id="zipFc" disabled>ファミコン一式をZIPで保存（PNG 2点＋.nes＋CHR/NT/ATTR/PAL）</button>
-          <button type="button" class="primary" id="zipOthers" disabled>ほかの4機種をまとめてZIPで保存（PNG 8点）</button>
-        </div>
-        <p class="zipmsg" id="zipMsg"></p>
-      </section>
+      
 
       <p class="note">縮小にはブラウザの補間を使うため、画素値とMSEは Python 版（LANCZOS）のバッチ変換とわずかに異なる場合があります。FCの .nes は NROM の静止画ビューアで、エミュレータで開くとそのまま絵が表示されます。ダウンロードボタンを押すと、表示されたファイル名のまま、その場で保存されます。プレビューPNGは各機種のネイティブ解像度の整数倍で、縦横比はネイティブのままです（PC-8801のみ表示比4:3に補正）。</p>
 
