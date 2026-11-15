@@ -163,6 +163,13 @@
       .zipbar { margin-top: 16px; }
       .zipbar p { margin: 0; color: var(--sub); font-size: 13.5px; }
       .zipbar .zipmsg { font-family: var(--mono); font-size: 12.5px; min-height: 1.4em; }
+      .vidctl { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; }
+      .vidctl .lab { font-size: 13px; color: var(--sub); }
+      .vidstatus { font-family: var(--mono); font-size: 12.5px; color: var(--sub); min-height: 1.4em; margin-top: 8px; }
+      #vidOut { width: 100%; background: #000; image-rendering: pixelated; display: block; }
+      #vidResult { width: 100%; background: #000; display: block; margin-top: 10px; }
+      .vidwrap { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #000; }
+      .vidwrap.empty { display: none; }
       .err { color: var(--warn); font-size: 13.5px; margin-top: 10px; display: none; }
       .err.show { display: block; }
     </style>
@@ -178,7 +185,7 @@
       <p class="lead">画像を入れると、その場で往年のマシン仕様に変換して表示します。処理はすべてこの端末の中で完結し、画像が外部に送られることはありません。ファミコンはBG用タイル作成が必要な為、時間がかかります。表示用 .nes のROMファイルダウンロードが行えます。</p>
 
       <section class="drop" id="drop">
-        <p class="big">画像をここにドロップ</p>
+        <p class="big">画像・動画をここにドロップ</p>
         <div class="row">
           <button type="button" class="primary" id="pickBtn">画像を選ぶ</button>
           <input type="file" id="file" accept="image/*" />
@@ -201,6 +208,38 @@
           <button type="button" class="primary" id="zipFc" disabled>ファミコン一式をZIPで保存（PNG 2点＋.nes＋CHR/NT/ATTR/PAL）</button>
         </div>
         <p class="zipmsg" id="zipMsg"></p>
+      </section>
+      <section class="card zipbar" id="card-vid">
+        <header><h2>動画モード</h2></header>
+        <p>動画ファイルを1機種ずつレトロマシン規格に変換します。再生しながらフレーム単位で変換・録画するため、変換には動画の長さと同じ時間（最大60秒まで）がかかります。パレットは先頭フレームから決めて全編固定するので、ちらつきません。ファミコンは全体最適化が必要なため動画には対応していません。</p>
+        <div class="vidctl">
+          <button type="button" class="primary" id="vidPickBtn">動画を選ぶ</button>
+          <input type="file" id="vidFile" accept="video/*" hidden />
+          <span class="lab" id="vidName">動画が選択されていません</span>
+        </div>
+        <div class="vidctl">
+          <label class="lab">機種
+            <select id="vidMachine">
+              <option value="msx" selected>MSX2 SCREEN 5（256×212 / 適応16色）</option>
+              <option value="st">Atari ST（320×200 / 適応16色）</option>
+              <option value="p6">PC-6001mkII SCREEN 4（320×200 / 固定4色・上のパレット選択を使用）</option>
+              <option value="pc88">PC-8801 V1モード（640×200 / デジタル8色）</option>
+            </select>
+          </label>
+          <label class="lab">彩度
+            <input type="range" id="vidSat" min="0.5" max="2" step="0.1" value="1.4" />
+            <span id="vidSatVal">1.4</span>
+          </label>
+        </div>
+        <div class="vidctl">
+          <button type="button" class="primary" id="vidStart" disabled>変換開始</button>
+          <button type="button" id="vidStop" disabled>停止</button>
+          <button type="button" id="vidDl" disabled>変換した動画をダウンロード</button>
+        </div>
+        <p class="vidstatus" id="vidStatus"></p>
+        <div class="vidwrap empty" id="vidWrap"><canvas id="vidOut" width="768" height="636"></canvas></div>
+        <video id="vidResult" controls playsinline hidden></video>
+        <video id="vidSrc" playsinline preload="auto" style="position:absolute;left:-9999px;top:0;width:16px;height:16px"></video>
       </section>
       <p class="err" id="loadErr"></p>
 
@@ -917,7 +956,11 @@
     /* ============ UI wiring ============ */
     $('pickBtn').addEventListener('click', function(){ $('file').click(); });
     $('file').addEventListener('change', function(){
-      if (this.files && this.files[0]) loadBlob(this.files[0], this.files[0].name);
+      if (this.files && this.files[0]){
+        var f = this.files[0];
+        if (f.type && f.type.indexOf('video/') === 0 && window.__vidLoad) window.__vidLoad(f);
+        else loadBlob(f, f.name);
+      }
       this.value = '';
     });
     var drop = $('drop');
@@ -929,7 +972,9 @@
     });
     drop.addEventListener('drop', function(e){
       var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f) loadBlob(f, f.name);
+      if (!f) return;
+      if (f.type && f.type.indexOf('video/') === 0 && window.__vidLoad) window.__vidLoad(f);
+      else loadBlob(f, f.name);
     });
     document.addEventListener('paste', function(e){
       var items = e.clipboardData && e.clipboardData.items;
@@ -1593,6 +1638,258 @@
       }
       return sm;
     }
+    </script>
+    <script>
+    /* ============ video mode ============
+       Frame-by-frame conversion of a video file with the same
+       converters as the still images (nearestDither / adaptive16).
+       The palette is decided from the first frame and fixed for the
+       whole clip, so colors never flicker between frames. Conversion
+       runs in real time: the source plays while the converted canvas
+       is recorded with MediaRecorder (video track from the canvas,
+       audio track routed through an AudioContext when available).
+       Everything stays on the device, like the image mode. */
+    (function(){
+      var MAXSEC = 60;
+      var vidSrc = $('vidSrc'), vidOut = $('vidOut'), vidResult = $('vidResult');
+      var octx = vidOut.getContext('2d');
+      var nativeCv = document.createElement('canvas');
+      var nctx = nativeCv.getContext('2d');
+      var grabCv = document.createElement('canvas');
+      var dispCv = document.createElement('canvas');
+      var V = {
+        url: null, name: '', stem: 'video', running: false,
+        pal: null, machine: 'msx', mw: 256, mh: 212,
+        rec: null, chunks: [], mime: '', audioOn: false,
+        actx: null, aDest: null, frames: 0, resultBlob: null, resultName: ''
+      };
+      var MACHINES = {
+        st:   { w: 320, h: 200, ow: 960, oh: 600, label: 'st' },
+        msx:  { w: 256, h: 212, ow: 768, oh: 636, label: 'msx' },
+        p6:   { w: 320, h: 200, ow: 960, oh: 600, label: 'p6' },
+        pc88: { w: 640, h: 200, ow: 960, oh: 720, label: 'pc88' }
+      };
+      function vStatus(msg){ $('vidStatus').textContent = msg; }
+      function satVal(){ return parseFloat($('vidSat').value) || 1; }
+      $('vidSat').addEventListener('input', function(){ $('vidSatVal').textContent = satVal().toFixed(1); });
+
+      function setFilter(ctx){
+        try {
+          ctx.filter = 'saturate(' + satVal() + ')';
+          if (ctx.filter === '' || ctx.filter === 'none') return false;
+          return ctx.filter.indexOf('saturate') >= 0;
+        } catch (e) { return false; }
+      }
+      /* Same fit math as resizeFit, but the source is the video element. */
+      function grabFit(w, h){
+        grabCv.width = w; grabCv.height = h;
+        var ctx = grabCv.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = true;
+        try { ctx.imageSmoothingQuality = 'high'; } catch (e) {}
+        var iw = vidSrc.videoWidth, ih = vidSrc.videoHeight;
+        var s = Math.min(w / iw, h / ih);
+        var dw = Math.max(1, Math.round(iw * s)), dh = Math.max(1, Math.round(ih * s));
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+        setFilter(ctx);
+        ctx.drawImage(vidSrc, 0, 0, iw, ih, Math.round((w - dw) / 2), Math.round((h - dh) / 2), dw, dh);
+        try { ctx.filter = 'none'; } catch (e) {}
+        return ctx.getImageData(0, 0, w, h).data;
+      }
+      /* PC-88: fit in 640x480 display space first, then average down. */
+      function grabFitDisplay(w, h, dispH){
+        dispCv.width = w; dispCv.height = dispH;
+        var dctx = dispCv.getContext('2d');
+        dctx.imageSmoothingEnabled = true;
+        try { dctx.imageSmoothingQuality = 'high'; } catch (e) {}
+        var iw = vidSrc.videoWidth, ih = vidSrc.videoHeight;
+        var s = Math.min(w / iw, dispH / ih);
+        var dw = Math.max(1, Math.round(iw * s)), dh = Math.max(1, Math.round(ih * s));
+        dctx.fillStyle = '#000'; dctx.fillRect(0, 0, w, dispH);
+        setFilter(dctx);
+        dctx.drawImage(vidSrc, 0, 0, iw, ih, Math.round((w - dw) / 2), Math.round((dispH - dh) / 2), dw, dh);
+        try { dctx.filter = 'none'; } catch (e) {}
+        grabCv.width = w; grabCv.height = h;
+        var ctx = grabCv.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = true;
+        try { ctx.imageSmoothingQuality = 'high'; } catch (e) {}
+        ctx.drawImage(dispCv, 0, 0, w, h);
+        return ctx.getImageData(0, 0, w, h).data;
+      }
+      function grabBase(){
+        if (V.machine === 'pc88') return grabFitDisplay(640, 200, 480);
+        return grabFit(V.mw, V.mh);
+      }
+      function decidePalette(){
+        var base = grabBase();
+        if (V.machine === 'st' || V.machine === 'msx'){
+          V.pal = adaptive16(base, V.mw, V.mh);
+        } else if (V.machine === 'p6'){
+          var sel = $('p6set').value;
+          var sets = P6SETS.map(function(set){ return set.map(function(nm){ return PAL15[nm]; }); });
+          if (sel === 'auto'){
+            var pick = 0, bt = Infinity;
+            sets.forEach(function(pal, i){
+              var r = nearestDither(base, V.mw, V.mh, pal);
+              if (r.totalErr < bt){ bt = r.totalErr; pick = i; }
+            });
+            V.pal = sets[pick];
+          } else V.pal = sets[parseInt(sel, 10)];
+        } else {
+          V.pal = DIGITAL8;
+        }
+      }
+      function convertFrame(){
+        var base = grabBase();
+        var r = nearestDither(base, V.mw, V.mh, V.pal);
+        nativeCv.width = V.mw; nativeCv.height = V.mh;
+        nctx.putImageData(new ImageData(r.out, V.mw, V.mh), 0, 0);
+        octx.imageSmoothingEnabled = false;
+        octx.drawImage(nativeCv, 0, 0, vidOut.width, vidOut.height);
+        V.frames++;
+        vStatus('変換中… ' + vidSrc.currentTime.toFixed(1) + '秒 / ' +
+          Math.min(vidSrc.duration || 0, MAXSEC).toFixed(1) + '秒（' + V.frames + 'フレーム）');
+      }
+      function frameLoop(){
+        if (!V.running) return;
+        convertFrame();
+        if (vidSrc.currentTime >= Math.min(vidSrc.duration || MAXSEC, MAXSEC) - 0.05){ finish(); return; }
+        if (vidSrc.requestVideoFrameCallback) vidSrc.requestVideoFrameCallback(frameLoop);
+        else setTimeout(frameLoop, 33);
+      }
+      function pickMime(){
+        if (!window.MediaRecorder) return '';
+        var cands = ['video/mp4;codecs="avc1.640028,mp4a.40.2"', 'video/mp4',
+                     'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+        for (var i = 0; i < cands.length; i++){
+          try { if (MediaRecorder.isTypeSupported(cands[i])) return cands[i]; } catch (e) {}
+        }
+        return '';
+      }
+      function setupAudio(stream){
+        try {
+          if (!V.actx){
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) return false;
+            V.actx = new AC();
+            var node = V.actx.createMediaElementSource(vidSrc);
+            V.aDest = V.actx.createMediaStreamDestination();
+            node.connect(V.actx.destination);
+            node.connect(V.aDest);
+          }
+          if (V.actx.state === 'suspended') V.actx.resume();
+          var tracks = V.aDest.stream.getAudioTracks();
+          if (!tracks.length) return false;
+          tracks.forEach(function(t){ stream.addTrack(t); });
+          return true;
+        } catch (e) { return false; }
+      }
+      function start(){
+        if (!vidSrc.src || V.running) return;
+        if (!window.MediaRecorder){ vStatus('このブラウザは動画の録画（MediaRecorder）に未対応のため、動画変換を利用できません。'); return; }
+        var M = MACHINES[V.machine];
+        V.mw = M.w; V.mh = M.h;
+        vidOut.width = M.ow; vidOut.height = M.oh;
+        $('vidWrap').classList.remove('empty');
+        vidResult.hidden = true;
+        $('vidDl').disabled = true;
+        V.resultBlob = null;
+        vidSrc.pause();
+        vidSrc.currentTime = 0;
+        var begin = function(){
+          decidePalette();
+          convertFrame(); /* paint frame 0 so the recording does not start black */
+          var stream = vidOut.captureStream(30);
+          V.audioOn = setupAudio(stream);
+          vidSrc.muted = !V.audioOn;
+          V.mime = pickMime();
+          V.chunks = [];
+          try {
+            V.rec = new MediaRecorder(stream, V.mime ? { mimeType: V.mime, videoBitsPerSecond: 8000000 } : { videoBitsPerSecond: 8000000 });
+          } catch (e) { vStatus('録画を開始できませんでした: ' + e.message); return; }
+          V.rec.ondataavailable = function(ev){ if (ev.data && ev.data.size) V.chunks.push(ev.data); };
+          V.rec.onstop = finalize;
+          V.frames = 0;
+          V.running = true;
+          $('vidStart').disabled = true; $('vidStop').disabled = false;
+          $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidPickBtn').disabled = true;
+          V.rec.start(250);
+          vidSrc.play().then(function(){
+            vStatus('変換中…（音声: ' + (V.audioOn ? 'あり' : 'なし（このブラウザでは映像のみ録画します）') + '）');
+            frameLoop();
+          }).catch(function(err){ finish(); vStatus('再生を開始できませんでした: ' + err.message); });
+        };
+        var ready = function(){
+          if (vidSrc.readyState >= 2 && !vidSrc.seeking) begin();
+          else {
+            var h = function(){
+              if (vidSrc.readyState >= 2 && !vidSrc.seeking){
+                vidSrc.removeEventListener('seeked', h);
+                vidSrc.removeEventListener('canplay', h);
+                begin();
+              }
+            };
+            vidSrc.addEventListener('seeked', h);
+            vidSrc.addEventListener('canplay', h);
+          }
+        };
+        ready();
+      }
+      function finish(){
+        if (!V.running) return;
+        V.running = false;
+        vidSrc.pause();
+        $('vidStart').disabled = false; $('vidStop').disabled = true;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidPickBtn').disabled = false;
+        if (V.rec && V.rec.state !== 'inactive') V.rec.stop();
+      }
+      function finalize(){
+        var type = V.mime ? V.mime.split(';')[0] : 'video/webm';
+        var ext = type.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+        V.resultBlob = new Blob(V.chunks, { type: type });
+        V.resultName = V.stem + '_' + MACHINES[V.machine].label + '_video.' + ext;
+        vidResult.src = URL.createObjectURL(V.resultBlob);
+        vidResult.hidden = false;
+        $('vidDl').disabled = false;
+        vStatus('完了: ' + V.resultName + '（' + (V.resultBlob.size / 1048576).toFixed(1) + 'MB / ' + V.frames + 'フレーム変換 / 音声' + (V.audioOn ? 'あり' : 'なし') + '）');
+      }
+      function loadVideoFile(file){
+        if (V.running) return;
+        if (V.url) URL.revokeObjectURL(V.url);
+        V.url = URL.createObjectURL(file);
+        V.name = file.name;
+        V.stem = stemOf(file.name);
+        vidSrc.src = V.url;
+        $('vidName').textContent = file.name + '（' + (file.size / 1048576).toFixed(1) + 'MB）';
+        vidResult.hidden = true;
+        $('vidDl').disabled = true;
+        vStatus('動画を読み込み中…');
+      }
+      window.__vidLoad = loadVideoFile;
+      vidSrc.addEventListener('loadedmetadata', function(){
+        if (!V.name) return;
+        var d = vidSrc.duration || 0;
+        $('vidStart').disabled = false;
+        vStatus('準備完了: ' + vidSrc.videoWidth + '×' + vidSrc.videoHeight + ' / ' + d.toFixed(1) + '秒' +
+          (d > MAXSEC ? '（先頭' + MAXSEC + '秒まで変換します）' : ''));
+        document.getElementById('card-vid').scrollIntoView({ block: 'nearest' });
+      });
+      vidSrc.addEventListener('ended', function(){ if (V.running) finish(); });
+      vidSrc.addEventListener('error', function(){
+        if (V.name) vStatus('動画を読み込めませんでした。対応形式の動画でお試しください。');
+      });
+      $('vidPickBtn').addEventListener('click', function(){ $('vidFile').click(); });
+      $('vidFile').addEventListener('change', function(){
+        if (this.files && this.files[0]) loadVideoFile(this.files[0]);
+        this.value = '';
+      });
+      $('vidMachine').addEventListener('change', function(){ V.machine = this.value; });
+      $('vidStart').addEventListener('click', start);
+      $('vidStop').addEventListener('click', finish);
+      $('vidDl').addEventListener('click', function(){
+        if (V.resultBlob) downloadBlob(V.resultBlob, V.resultName);
+      });
+      if (!window.MediaRecorder) vStatus('このブラウザは動画の録画（MediaRecorder）に未対応のため、動画変換を利用できません。');
+    })();
     </script>
   </body>
 </html>
