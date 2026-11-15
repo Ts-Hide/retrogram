@@ -290,7 +290,7 @@
 
       <section class="card zipbar">
         <header><h2>まとめてZIPで保存</h2></header>
-        <p>変換結果をまとめて1つのZIPファイルにします。ボタンを押すと、パソコンでは新しいタブから保存が始まり、スマートフォンでは保存シートが開くので、個別に何度も保存する代わりに一括で受け取れます。</p>
+        <p>変換結果をまとめて1つのZIPファイルにします。ボタンを押すとZIPファイルがそのままダウンロードされるので、個別に何度も保存する代わりに一括で受け取れます。</p>
         <div class="dl">
           <button type="button" class="primary" id="zipFc" disabled>ファミコン一式をZIPで保存（PNG 2点＋.nes＋CHR/NT/ATTR/PAL）</button>
           <button type="button" class="primary" id="zipOthers" disabled>ほかの4機種をまとめてZIPで保存（PNG 8点）</button>
@@ -298,7 +298,7 @@
         <p class="zipmsg" id="zipMsg"></p>
       </section>
 
-      <p class="note">縮小にはブラウザの補間を使うため、画素値とMSEは Python 版（LANCZOS）のバッチ変換とわずかに異なる場合があります。FCの .nes は NROM の静止画ビューアで、エミュレータで開くとそのまま絵が表示されます。パソコンでは、ダウンロードボタンを押すと新しいタブが開いて保存が始まります（始まらない場合はタブ内のリンクをクリックしてください）。スマートフォンでは保存用のシートが開くので、シートの「直接ダウンロード」または「共有して保存」から保存すると表示されたファイル名がそのまま付きます（画像を長押し／右クリックで保存すると、ブラウザがランダムな名前を付けてしまいます）。プレビューPNGは各機種のネイティブ解像度の整数倍で、縦横比はネイティブのままです（PC-8801のみ表示比4:3に補正）。</p>
+      <p class="note">縮小にはブラウザの補間を使うため、画素値とMSEは Python 版（LANCZOS）のバッチ変換とわずかに異なる場合があります。FCの .nes は NROM の静止画ビューアで、エミュレータで開くとそのまま絵が表示されます。ダウンロードボタンを押すと、表示されたファイル名のまま、その場で保存されます。プレビューPNGは各機種のネイティブ解像度の整数倍で、縦横比はネイティブのままです（PC-8801のみ表示比4:3に補正）。</p>
 
       <div class="sheet" id="saveSheet" hidden>
         <div class="sheetpanel" role="dialog" aria-modal="true" aria-labelledby="sheetName">
@@ -619,21 +619,25 @@
         return rom;
       });
     }
-    function openZipSheet(key, entries, zipName, saveWin){
+    function directDownload(blob, name){
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+    }
+    function openZipSheet(key, entries, zipName){
       var usable = entries.filter(function(e){ return e && e.data; });
       if (!usable.length){
         $('zipMsg').textContent = 'ZIPに入れるファイルがまだありません。';
-        saveWindowNote(saveWin, 'ZIPに入れるファイルがまだありません。このタブは閉じてかまいません。');
         return;
       }
       var blob = makeZip(usable);
-      $('zipMsg').textContent = zipName + '（' + usable.length + ' ファイル）を用意しました。';
-      /* Desktop path: the window opened synchronously at click time
-         receives the ZIP. Mobile, a blocked popup, or a failed hand-off
-         falls back to the save sheet with the same Blob. */
-      if (deliverToSaveWindow(blob, zipName, saveWin)) return;
-      armStore(key, blob, zipName);
-      openSaveSheet(key);
+      $('zipMsg').textContent = zipName + '（' + usable.length + ' ファイル）のダウンロードを開始しました。';
+      directDownload(blob, zipName);
     }
 
     /* ============ image loading ============ */
@@ -1019,22 +1023,9 @@
       $('saveSheet').hidden = false;
     }
     function closeSaveSheet(){ $('saveSheet').hidden = true; }
-    document.querySelectorAll('.dl a.dllink').forEach(function(el){
-      el.addEventListener('click', function(e){
-        if (el.classList.contains('off')) return;
-        e.preventDefault();
-        var key = linkKey(el);
-        var rec = fileStore[key];
-        if (!rec) return;
-        /* Mobile keeps the save sheet, which is the flow confirmed
-           working on iPhone. Desktop opens the escape-sandbox tab
-           FIRST, synchronously inside this click, then hands it the
-           already-prepared Blob; if the tab could not be opened, the
-           save sheet is the fallback. */
-        if (isMobileEnv()){ openSaveSheet(key); return; }
-        var w = openSaveWindow();
-        if (!deliverToSaveWindow(rec.blob, rec.name, w)) openSaveSheet(key);
-      });
+    /* GitHub Pages 版：トップレベル配信のため、ダウンロードリンクは
+       armLink が設定した href + download 属性のまま直接保存される。
+       （Muse 共有ページの sandbox 回避策だった別タブ／シート方式は不要） */
     });
     /* Bundle buttons: assemble the ZIP from the current results, then
        present it through the same save sheet as single files. */
@@ -1043,22 +1034,19 @@
       /* Open the save tab synchronously, before the async ZIP build —
          after an await the popup would be blocked. Mobile skips the
          tab and uses the save sheet as before. */
-      var saveWin = isMobileEnv() ? null : openSaveWindow();
       btn.disabled = true;
       $('zipMsg').textContent = 'ZIPを作成中…';
       Promise.all(['st', 'msx', 'p6', 'pc88'].map(machinePngEntries)).then(function(lists){
         var entries = [];
         lists.forEach(function(l){ entries = entries.concat(l); });
-        openZipSheet('zip:others', entries, srcStem + '_others.zip', saveWin);
+        openZipSheet('zip:others', entries, srcStem + '_others.zip');
       }).catch(function(){
         $('zipMsg').textContent = 'ZIPの作成に失敗しました。';
-        saveWindowNote(saveWin, 'ZIPの作成に失敗しました。このタブは閉じてかまいません。');
       }).then(function(){ btn.disabled = false; });
     });
     $('zipFc').addEventListener('click', function(){
       if (!fcBins) return;
       var btn = this;
-      var saveWin = isMobileEnv() ? null : openSaveWindow();
       btn.disabled = true;
       $('zipMsg').textContent = 'ZIPを作成中…';
       Promise.all([machinePngEntries('fc'), buildNesBytes()]).then(function(res){
@@ -1069,10 +1057,9 @@
         entries.push({ name: stem + '_fc_nt.bin', data: fcBins.nt });
         entries.push({ name: stem + '_fc_attr.bin', data: fcBins.attr });
         entries.push({ name: stem + '_fc_pal.bin', data: fcBins.pal });
-        openZipSheet('zip:fc', entries, stem + '_fc.zip', saveWin);
+        openZipSheet('zip:fc', entries, stem + '_fc.zip');
       }).catch(function(){
         $('zipMsg').textContent = 'ZIPの作成に失敗しました。';
-        saveWindowNote(saveWin, 'ZIPの作成に失敗しました。このタブは閉じてかまいません。');
       }).then(function(){ btn.disabled = false; });
     });
     $('sheetClose').addEventListener('click', closeSaveSheet);
