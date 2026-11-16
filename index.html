@@ -1207,7 +1207,9 @@
     async function fcConvert(token){
       var budgetMs = fcBudgetSec * 1000;
       var t0 = performance.now();
-      var deadline1 = t0 + budgetMs * 0.5;
+      var deadline1 = t0 + budgetMs * 0.45;
+      var deadlineS4 = t0 + budgetMs * 0.70;
+      var deadline5 = t0 + budgetMs * 0.97;
       var deadline4 = t0 + budgetMs;
       var rng = mulberry32(20261114);
       var MF = MASTER;
@@ -1375,7 +1377,7 @@
       }
 
       /* ---- stage 1: palette hill-climb + restarts (first half of the budget) ---- */
-      var phase1 = { tStart: t0, tEnd: deadline1, frac0: 0.03, frac1: 0.45, label: 'FC 段階1/4 パレット探索', minIter: 600 };
+      var phase1 = { tStart: t0, tEnd: deadline1, frac0: 0.03, frac1: 0.45, label: 'FC 段階1/5 パレット探索', minIter: 600 };
       var r1 = await climb(bg0, pals0, evalAssign, phase1);
       var bg = r1.bg, pals = r1.pals, cost = r1.cost;
       while (performance.now() < deadline1){
@@ -1387,7 +1389,7 @@
       }
 
       /* ---- stage 2: per-pixel slot extraction ---- */
-      fcProgress(0.47, 'FC 段階2/4 スロット抽出…');
+      fcProgress(0.47, 'FC 段階2/5 スロット抽出…');
       var assign = new Uint8Array(FCNB);
       evalAssign(bg, pals, assign);
       var slotMap = new Uint8Array(NP);
@@ -1426,10 +1428,11 @@
         return { pats: pats, grid: grid };
       }
       var ext = extractPatterns(slotMap);
-      fcProgress(0.5, 'FC 段階3/4 タイル化（ユニーク ' + ext.pats.length + ' 枚）');
+      fcProgress(0.5, 'FC 段階3/5 タイル化（ユニーク ' + ext.pats.length + ' 枚）');
       await tick();
       if (ext.pats.length > 256){
-        slotMap = await mergeTiles(ext.pats, ext.grid, assign, bg, pals, tick, remainText);
+        slotMap = await mergeTiles(ext.pats, ext.grid, assign, bg, pals, tick, remainText,
+                                   256, 0.50, 0.60, 'FC 段階3/5 タイル圧縮');
         if (!alive()) throw 'abort';
         ext = extractPatterns(slotMap);
       }
@@ -1453,32 +1456,148 @@
       showCanvas('wrap-fc', 'cv-fc');
       enableDownloads('fc', true);
       $('st-fc').textContent = '暫定表示（タイル ' + ext.pats.length + ' 枚確定、パレット再最適化中…）';
-      fcProgress(0.62, 'FC 段階3/4 完了　タイル ' + ext.pats.length + ' 枚　' + remainText());
+      fcProgress(0.62, 'FC 段階3/5 完了　タイル ' + ext.pats.length + ' 枚　' + remainText());
       await tick();
 
-      /* ---- stage 4: re-optimize palettes with patterns fixed (rest of the budget) ---- */
-      bse = new Float32Array(FCNB * 4 * 64);
-      for (var b2 = 0; b2 < FCNB; b2++){
-        var blk2 = blocks[b2];
-        var cntUS = new Float32Array(blk2.nu * 4);
-        var byy2 = (b2 / FCBW) | 0, bxx2 = b2 % FCBW;
-        for (var i3 = 0; i3 < 256; i3++)
-          cntUS[blk2.uid[i3] * 4 + slotMap[(byy2 * 16 + (i3 >> 4)) * FCW + bxx2 * 16 + (i3 & 15)]]++;
-        for (var u3 = 0; u3 < blk2.nu; u3++) for (var s3 = 0; s3 < 4; s3++){
-          var wgt = cntUS[u3 * 4 + s3];
-          if (!wgt) continue;
-          var o3 = u3 * 64, bo = (b2 * 4 + s3) * 64;
-          for (var c4 = 0; c4 < 64; c4++) bse[bo + c4] += wgt * blk2.dist[o3 + c4];
+      /* ---- stage 4: re-optimize palettes with patterns fixed ---- */
+      async function buildBse(sm){
+        var arr = new Float32Array(FCNB * 4 * 64);
+        for (var b2 = 0; b2 < FCNB; b2++){
+          var blk2 = blocks[b2];
+          var cntUS = new Float32Array(blk2.nu * 4);
+          var byy2 = (b2 / FCBW) | 0, bxx2 = b2 % FCBW;
+          for (var i3 = 0; i3 < 256; i3++)
+            cntUS[blk2.uid[i3] * 4 + sm[(byy2 * 16 + (i3 >> 4)) * FCW + bxx2 * 16 + (i3 & 15)]]++;
+          for (var u3 = 0; u3 < blk2.nu; u3++) for (var s3 = 0; s3 < 4; s3++){
+            var wgt = cntUS[u3 * 4 + s3];
+            if (!wgt) continue;
+            var o3 = u3 * 64, bo = (b2 * 4 + s3) * 64;
+            for (var c4 = 0; c4 < 64; c4++) arr[bo + c4] += wgt * blk2.dist[o3 + c4];
+          }
+          await tick();
         }
-        await tick();
+        return arr;
       }
-      var phase4 = { tStart: performance.now(), tEnd: deadline4, frac0: 0.65, frac1: 0.95, label: 'FC 段階4/4 パレット再最適化', minIter: 300 };
+      bse = await buildBse(slotMap);
+      var phase4 = { tStart: performance.now(), tEnd: deadlineS4, frac0: 0.65, frac1: 0.80, label: 'FC 段階4/5 パレット再最適化', minIter: 300 };
       var r4 = await climb(bg, pals, evalFixed, phase4);
       bg = r4.bg; pals = r4.pals;
       var assignF = new Uint8Array(FCNB);
       evalFixed(bg, pals, assignF);
 
-      /* ---- stage 5: final render, audit, PPU data ---- */
+      /* ---- stage 5: merge-split-reassign refinement (user proposal;
+         cf. fc_convert3.py) — merge near-identical tiles below the 256
+         budget, spend the freed slots on new tiles for the highest-error
+         positions (their own ideal patterns), reassign every position to
+         its best pattern, and re-climb palettes. A cycle is adopted only
+         when total SSE drops; cycles run inside the remaining budget. ---- */
+      function patKey(pat){
+        var key = '';
+        for (var j = 0; j < 64; j += 8)
+          key += String.fromCharCode(pat[j], pat[j + 1], pat[j + 2], pat[j + 3], pat[j + 4], pat[j + 5], pat[j + 6], pat[j + 7]);
+        return key;
+      }
+      function splitCandidates(sm, assignArr, bgC, palsC, room){
+        var ext = extractPatterns(sm);
+        if (ext.pats.length >= 256 || room <= 0) return [];
+        var have = new Set();
+        ext.pats.forEach(function(p){ have.add(patKey(p)); });
+        var scored = [];
+        for (var ty = 0; ty < 30; ty++) for (var tx = 0; tx < 32; tx++){
+          var b = (ty >> 1) * FCBW + (tx >> 1), k = assignArr[b];
+          var colsI = [MF[bgC], MF[palsC[k * 3]], MF[palsC[k * 3 + 1]], MF[palsC[k * 3 + 2]]];
+          var err = 0, ideal = new Uint8Array(64);
+          for (var yy = 0; yy < 8; yy++) for (var xx = 0; xx < 8; xx++){
+            var gp = (ty * 8 + yy) * FCW + (tx * 8 + xx), o = gp * 4;
+            var r = base[o], g = base[o + 1], bl = base[o + 2];
+            var curC = colsI[sm[gp]];
+            err += (curC[0] - r) * (curC[0] - r) + (curC[1] - g) * (curC[1] - g) + (curC[2] - bl) * (curC[2] - bl);
+            var bs = 0, bd = Infinity;
+            for (var s = 0; s < 4; s++){
+              var cc = colsI[s];
+              var d = (cc[0] - r) * (cc[0] - r) + (cc[1] - g) * (cc[1] - g) + (cc[2] - bl) * (cc[2] - bl);
+              if (d < bd){ bd = d; bs = s; }
+            }
+            ideal[yy * 8 + xx] = bs;
+          }
+          if (err > 0) scored.push([err, ideal]);
+        }
+        scored.sort(function(a, b){ return b[0] - a[0]; });
+        var out = [];
+        for (var i = 0; i < scored.length && out.length < room; i++){
+          var key = patKey(scored[i][1]);
+          if (have.has(key)) continue;
+          have.add(key); out.push(scored[i][1]);
+        }
+        return out;
+      }
+      async function reassignAll(sm, assignArr, bgC, palsC, extraPats){
+        var ext = extractPatterns(sm);
+        var pats = ext.pats.concat(extraPats);
+        var rend = [null, null, null, null];
+        function rendFor(k){
+          if (rend[k]) return rend[k];
+          var colsI = [MF[bgC], MF[palsC[k * 3]], MF[palsC[k * 3 + 1]], MF[palsC[k * 3 + 2]]];
+          var arr = new Float32Array(pats.length * 192);
+          for (var pi = 0; pi < pats.length; pi++){
+            var pat = pats[pi];
+            for (var p = 0; p < 64; p++){
+              var col = colsI[pat[p]], oo = pi * 192 + p * 3;
+              arr[oo] = col[0]; arr[oo + 1] = col[1]; arr[oo + 2] = col[2];
+            }
+          }
+          rend[k] = arr; return arr;
+        }
+        var out = new Uint8Array(NP);
+        for (var ty = 0; ty < 30; ty++){
+          for (var tx = 0; tx < 32; tx++){
+            var b = (ty >> 1) * FCBW + (tx >> 1), k = assignArr[b];
+            var R = rendFor(k), bestP = 0, bestE = Infinity;
+            for (var pi2 = 0; pi2 < pats.length; pi2++){
+              var e = 0, oo2 = pi2 * 192;
+              for (var yy = 0; yy < 8 && e < bestE; yy++) for (var xx = 0; xx < 8; xx++){
+                var o = ((ty * 8 + yy) * FCW + (tx * 8 + xx)) * 4, pp = (yy * 8 + xx) * 3;
+                var dr = R[oo2 + pp] - base[o], dg = R[oo2 + pp + 1] - base[o + 1], db = R[oo2 + pp + 2] - base[o + 2];
+                e += dr * dr + dg * dg + db * db;
+              }
+              if (e < bestE){ bestE = e; bestP = pi2; }
+            }
+            var patB = pats[bestP];
+            for (var yy2 = 0; yy2 < 8; yy2++) for (var xx2 = 0; xx2 < 8; xx2++)
+              out[(ty * 8 + yy2) * FCW + (tx * 8 + xx2)] = patB[yy2 * 8 + xx2];
+          }
+          await tick();
+        }
+        return out;
+      }
+      var bestSm = slotMap, bestBg = bg, bestPals = pals.slice(), bestAssign = assignF;
+      var bestSse = evalFixed(bg, pals, null);
+      var K_SPLIT = 24, cyc = 0;
+      while (cyc < 12 && performance.now() < deadline5){
+        var extB = extractPatterns(bestSm);
+        var sm1 = bestSm;
+        if (extB.pats.length > 256 - K_SPLIT){
+          sm1 = await mergeTiles(extB.pats, extB.grid, bestAssign, bestBg, bestPals, tick, remainText,
+                                 256 - K_SPLIT, 0.82, 0.84, 'FC 段階5/5 タイル再配分');
+          if (!alive()) throw 'abort';
+        }
+        var newPats = splitCandidates(sm1, bestAssign, bestBg, bestPals, K_SPLIT);
+        var sm2 = await reassignAll(sm1, bestAssign, bestBg, bestPals, newPats);
+        bse = await buildBse(sm2);
+        var cycEnd = Math.min(deadline5, performance.now() + Math.max(1200, (deadline5 - performance.now()) / 3));
+        var phase5 = { tStart: performance.now(), tEnd: cycEnd, frac0: 0.84, frac1: 0.95, label: 'FC 段階5/5 タイル再配分', minIter: 100 };
+        var r5 = await climb(bestBg, bestPals, evalFixed, phase5);
+        var assignC = new Uint8Array(FCNB);
+        var sseC = evalFixed(r5.bg, r5.pals, assignC);
+        fcProgress(0.95, 'FC 段階5/5 サイクル ' + (cyc + 1) + '　MSE ' + (sseC / (NP * 3)).toFixed(1) + '　' + remainText());
+        if (sseC < bestSse * 0.999){
+          bestSm = sm2; bestBg = r5.bg; bestPals = r5.pals; bestAssign = assignC; bestSse = sseC;
+        } else break;
+        cyc++;
+      }
+      slotMap = bestSm; bg = bestBg; pals = bestPals; assignF = bestAssign;
+
+      /* ---- stage 6: final render, audit, PPU data ---- */
       fcProgress(0.97, 'FC 仕上げ: レンダリングと .nes データ生成…');
       var outF = renderWith(assignF, bg, pals);
       var se = 0, usedSet = new Set();
@@ -1532,7 +1651,7 @@
       fcProgress(1, 'FC 完了　' + remainText() + '　MSE ' + mseF.toFixed(1));
     }
 
-    async function mergeTiles(patsIn, gridIn, assign, bg, pals, tick, remainText){
+    async function mergeTiles(patsIn, gridIn, assign, bg, pals, tick, remainText, target, f0, f1, label){
       var MF = MASTER, NP = FCW * FCH;
       var n = patsIn.length;
       var usages = [];
@@ -1612,10 +1731,10 @@
       alive.forEach(function(v){ ilist.push(v); });
       for (var i4 = 0; i4 < ilist.length; i4++){
         best.set(ilist[i4], bestFor(ilist[i4]));
-        if (i4 % 60 === 0){ fcProgress(0.5 + 0.03 * (i4 / ilist.length), 'FC 段階3/4 タイル圧縮の準備中…　' + remainText()); await tick(); }
+        if (i4 % 60 === 0){ fcProgress(f0 + (f1 - f0) * 0.3 * (i4 / ilist.length), label + 'の準備中…　' + remainText()); await tick(); }
       }
-      var grid = gridIn, merges = 0, totalMerges = Math.max(1, n - 256);
-      while (alive.size > 256){
+      var grid = gridIn, merges = 0, totalMerges = Math.max(1, n - target);
+      while (alive.size > target){
         var bMin = -1, cMin = Infinity;
         best.forEach(function(v, kk){ if (v.a >= 0 && v.cost < cMin){ cMin = v.cost; bMin = kk; } });
         if (bMin < 0) break;
@@ -1633,7 +1752,7 @@
         for (var ri = 0; ri < redo.length; ri++) best.set(redo[ri], bestFor(redo[ri]));
         merges++;
         if (merges % 20 === 0){
-          fcProgress(0.53 + 0.07 * (merges / totalMerges), 'FC 段階3/4 タイル圧縮中… あと ' + (alive.size - 256) + ' 枚　' + remainText());
+          fcProgress(f0 + (f1 - f0) * (0.3 + 0.7 * (merges / totalMerges)), label + '中… あと ' + (alive.size - target) + ' 枚　' + remainText());
           await tick();
         }
       }
