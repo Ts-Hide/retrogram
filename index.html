@@ -333,7 +333,9 @@
             <a class="dllink off" data-dl="preview" data-m="mz700" rel="noopener">プレビューPNG（1600×1000）</a>
             <a class="dllink off" id="dlMzText" rel="noopener">TEXT</a>
             <a class="dllink off" id="dlMzAttr" rel="noopener">ATTR</a>
+            <a class="dllink off" id="dlMzMzt" rel="noopener">MZT（ビューアー付き）</a>
           </div>
+          <div class="lab">MZTは小さなZ80ビューアー付きのテープイメージです。実機MZ-700やMAMEで LOAD すると、この画像が表示されます。</div>
         </section>
 
         <section class="card wide" id="card-fc">
@@ -966,6 +968,36 @@
         usedCount: Object.keys(used).length, used: used, mse: se / (4000 * 3) };
     }
 
+    /* MZ-700 viewer MZT builder. Header layout verified against real files
+       (cavit.mzt / guntus.mzt): type 0x01, 17-byte name (space-padded,
+       0x0D as the last byte), LE16 size/load/exec, 104 zero comment bytes,
+       then the data body. The viewer is 25 bytes of Z80 code (pasmo,
+       mzview.asm in the project notes): it copies TEXT to VRAM $D000 and
+       ATTR to $D800, then loops forever so the picture stays on screen. */
+    var MZVIEW_CODE = [0x21,0x19,0x12,0x11,0x00,0xD0,0x01,0xE8,0x03,0xED,0xB0,
+                       0x21,0x01,0x16,0x11,0x00,0xD8,0x01,0xE8,0x03,0xED,0xB0,
+                       0xC3,0x16,0x12];
+    function mzTapeName(stem){
+      var s = (stem || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 16);
+      return s || 'MZVIEW';
+    }
+    function buildMztBytes(text, attr, stem){
+      var data = new Uint8Array(25 + 2000);
+      data.set(MZVIEW_CODE, 0);
+      data.set(text, 25);
+      data.set(attr, 1025);
+      var out = new Uint8Array(128 + data.length);
+      out[0] = 0x01;
+      var name = mzTapeName(stem);
+      for (var i = 0; i < 16; i++) out[1 + i] = (i < name.length) ? name.charCodeAt(i) : 0x20;
+      out[17] = 0x0D;
+      out[0x12] = data.length & 0xFF; out[0x13] = (data.length >> 8) & 0xFF;
+      out[0x14] = 0x00; out[0x15] = 0x12;   /* load $1200 */
+      out[0x16] = 0x00; out[0x17] = 0x12;   /* exec $1200 */
+      out.set(data, 128);
+      return out;
+    }
+
     function paintResult(m, w, h, rgba){
       var cv = $(MKEY[m]);
       cv.width = w; cv.height = h;
@@ -1022,6 +1054,7 @@
       var binType = { type: 'application/octet-stream' };
       armLink($('dlMzText'), new Blob([r.text], binType), srcStem + '_mz700_text.bin');
       armLink($('dlMzAttr'), new Blob([r.attr], binType), srcStem + '_mz700_attr.bin');
+      armLink($('dlMzMzt'), new Blob([buildMztBytes(r.text, r.attr, srcStem)], binType), srcStem + '_mz700.mzt');
       enableDownloads('mz700', true);
     }
     $('mzFloor').addEventListener('input', function(){
@@ -1064,7 +1097,7 @@
       $('zipOthers').disabled = true;
       $('zipMsg').textContent = '';
       ['dlNes','dlChr','dlNt','dlAttr','dlPal'].forEach(function(id){ disarmLink($(id)); });
-      ['dlMzText','dlMzAttr'].forEach(function(id){ disarmLink($(id)); });
+      ['dlMzText','dlMzAttr','dlMzMzt'].forEach(function(id){ disarmLink($(id)); });
       enableDownloads('fc', false);
       enableDownloads('mz700', false);
       $('st-fc').textContent = '';
@@ -1247,6 +1280,7 @@
         if (mzBins){
           entries.push({ name: srcStem + '_mz700_text.bin', data: mzBins.text });
           entries.push({ name: srcStem + '_mz700_attr.bin', data: mzBins.attr });
+          entries.push({ name: srcStem + '_mz700.mzt', data: buildMztBytes(mzBins.text, mzBins.attr, srcStem) });
         }
         openZipSheet('zip:others', entries, srcStem + '_others.zip');
       }).catch(function(){
