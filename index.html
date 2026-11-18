@@ -95,6 +95,8 @@
       input[type="file"] { display: none; }
       .p6ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 14px; }
       .p6ctl select { max-width: 100%; }
+      .mzctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 14px; }
+      .mzctl input[type="range"] { width: 140px; }
       .cvwrap canvas.tall { aspect-ratio: 640 / 480; }
       figure.src { margin: 18px 0 0; display: none; }
       figure.src.show { display: block; }
@@ -230,11 +232,16 @@
               <option value="st">Atari ST（320×200 / 適応16色）</option>
               <option value="p6">PC-6001mkII SCREEN 4（320×200 / 固定4色・上のパレット選択を使用）</option>
               <option value="pc88">PC-8801 V1モード（640×200 / デジタル8色）</option>
+              <option value="mz700">MZ-700 セミグラフィック（320×200 / デジタル8色）</option>
             </select>
           </label>
           <label class="lab">彩度
             <input type="range" id="vidSat" min="0.5" max="2" step="0.1" value="1.4" />
             <span id="vidSatVal">1.4</span>
+          </label>
+          <label class="lab" id="vidMzFloorLab" hidden>彩度底上げ（MZ-700のみ）
+            <input type="range" id="vidMzFloor" min="0" max="1" step="0.05" value="0.5" />
+            <span id="vidMzFloorVal">0.50</span>
           </label>
         </div>
         <div class="vidctl">
@@ -313,6 +320,11 @@
 
         <section class="card" id="card-mz700">
           <header><h2>MZ-700 セミグラフィック</h2><span class="spec">320×200 / 80×50ブロック / デジタル8色 / セル単位2色 / ディザなし</span></header>
+          <label class="mzctl">彩度底上げ
+            <input type="range" id="mzFloor" min="0" max="1" step="0.05" value="0.5" />
+            <span id="mzFloorVal">0.50</span>
+            <span class="lab">薄い色を鮮やかにして、パステルが白に潰れるのを防ぎます（0で無効）</span>
+          </label>
           <div class="cvwrap empty" id="wrap-mz700"><canvas id="cv-mz700" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
           <div class="stats" id="st-mz700"></div>
           <div class="swatches" id="sw-mz700"></div>
@@ -852,27 +864,56 @@
     }
 
     /* ============ MZ-700 semigraphics ============ */
+    /* Saturation floor: raise every pixel's saturation to at least
+       `floor` (0..1), keeping hue and value, so pastels survive as
+       their hue colors instead of collapsing to white. Pixels whose
+       color difference (max-min) is below 8/255 are treated as
+       achromatic and left alone, so true whites and grays never pick
+       up a tint from a near-arbitrary hue. Returns a new array; the
+       input is not modified. Floor 0 disables the effect. */
+    function applySatFloor(data, floor){
+      if (!floor) return data;
+      var out = new Uint8ClampedArray(data);
+      for (var i = 0; i < out.length; i += 4){
+        var r = out[i], g = out[i + 1], b = out[i + 2];
+        var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        var d = mx - mn;
+        if (d < 8 || mx === 0) continue;
+        var s = d / mx;
+        if (s >= floor) continue;
+        var f = (floor * mx) / d, nmn = mx * (1 - floor);
+        out[i]     = Math.max(0, Math.min(255, Math.round(nmn + (r - mn) * f)));
+        out[i + 1] = Math.max(0, Math.min(255, Math.round(nmn + (g - mn) * f)));
+        out[i + 2] = Math.max(0, Math.min(255, Math.round(nmn + (b - mn) * f)));
+      }
+      return out;
+    }
     // 40x25 cells, each 2x2 blocks, one fg+bg pair per cell from DIGITAL8.
     // Per-cell exhaustive search over all 64 pairs (same as the Python
     // trial): each block takes the nearer of the two colors; the pair
     // minimizing the total squared error of the cell's 4 sub-pixels wins.
     // No dithering — the mosaic IS the look. Returns {out, text, attr,
-    // usedCount, used, mse} with mse measured on the 80x50 base.
+    // usedCount, used, mse}. The pair choice is made on `base` (which
+    // may be saturation-floored); mse is measured against `refBase`
+    // (the unmodified 80x50 base, defaults to `base`) so the number
+    // stays honest when a floor is applied.
     // The real display renders each block as 3x3 px inside the 8x8 cell
     // (font ROM chars 0xF0-0xFF, verified against mz700fon.jpn: TL at
     // (1,1), TR at (5,1), BL at (1,5), BR at (5,5)); the 1px gaps show
     // the background color, so each cell is filled with bg first.
-    function convertMz700(base){
+    function convertMz700(base, refBase){
+      refBase = refBase || base;
       var text = new Uint8Array(1000), attr = new Uint8Array(1000);
       var out = new Uint8ClampedArray(320 * 200 * 4);
       var used = {}, se = 0;
       var ci = 0;
       for (var cy = 0; cy < 25; cy++){
         for (var cx = 0; cx < 40; cx++){
-          var px = [];
+          var px = [], rx = [];
           for (var sy = 0; sy < 2; sy++) for (var sx = 0; sx < 2; sx++){
             var i4 = ((cy * 2 + sy) * 80 + (cx * 2 + sx)) * 4;
             px.push([base[i4], base[i4 + 1], base[i4 + 2]]);
+            rx.push([refBase[i4], refBase[i4 + 1], refBase[i4 + 2]]);
           }
           var bestErr = Infinity, bestFg = 0, bestBg = 0, bestPick = 0;
           for (var fg = 0; fg < 8; fg++){
@@ -887,7 +928,16 @@
               if (err < bestErr){ bestErr = err; bestFg = fg; bestBg = bg; bestPick = pick; }
             }
           }
-          se += bestErr;
+          /* Reporting error: the chosen pair/pick measured against the
+             unmodified base, so the displayed MSE stays honest when a
+             saturation floor is applied. */
+          (function(){
+            var c0 = DIGITAL8[bestFg], c1 = DIGITAL8[bestBg];
+            for (var p = 0; p < 4; p++){
+              var chosen = ((bestPick >> p) & 1) ? c0 : c1, rq = rx[p];
+              se += (rq[0]-chosen[0])*(rq[0]-chosen[0]) + (rq[1]-chosen[1])*(rq[1]-chosen[1]) + (rq[2]-chosen[2])*(rq[2]-chosen[2]);
+            }
+          })();
           text[ci] = 0xF0 + bestPick;
           attr[ci] = (bestFg << 4) | bestBg;
           ci++;
@@ -955,21 +1005,29 @@
         enableDownloads('pc88', true);
       })();
       // MZ-700 semigraphics (80x50 blocks, cell-exhaustive 64-pair search)
-      (function(){
-        var base = resizeFit(srcBitmap, 80, 50);
-        var r = convertMz700(base);
-        paintResult('mz700', 320, 200, r.out); showCanvas('wrap-mz700', 'cv-mz700');
-        $('st-mz700').innerHTML = '使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>';
-        setSwatches('sw-mz700', DIGITAL8.filter(function(_, i){ return r.used[i]; }));
-        mzBins = { text: r.text, attr: r.attr };
-        var binType = { type: 'application/octet-stream' };
-        armLink($('dlMzText'), new Blob([r.text], binType), srcStem + '_mz700_text.bin');
-        armLink($('dlMzAttr'), new Blob([r.attr], binType), srcStem + '_mz700_attr.bin');
-        enableDownloads('mz700', true);
-      })();
+      runMz700();
       runP6();
       $('zipOthers').disabled = false;
     }
+
+    function mzFloorVal(){ return parseFloat($('mzFloor').value) || 0; }
+    function runMz700(){
+      if (!srcBitmap) return;
+      var base = resizeFit(srcBitmap, 80, 50);
+      var r = convertMz700(applySatFloor(base, mzFloorVal()), base);
+      paintResult('mz700', 320, 200, r.out); showCanvas('wrap-mz700', 'cv-mz700');
+      $('st-mz700').innerHTML = '使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>';
+      setSwatches('sw-mz700', DIGITAL8.filter(function(_, i){ return r.used[i]; }));
+      mzBins = { text: r.text, attr: r.attr };
+      var binType = { type: 'application/octet-stream' };
+      armLink($('dlMzText'), new Blob([r.text], binType), srcStem + '_mz700_text.bin');
+      armLink($('dlMzAttr'), new Blob([r.attr], binType), srcStem + '_mz700_attr.bin');
+      enableDownloads('mz700', true);
+    }
+    $('mzFloor').addEventListener('input', function(){
+      $('mzFloorVal').textContent = mzFloorVal().toFixed(2);
+      runMz700();
+    });
 
     function runP6(){
       if (!srcBitmap) return;
@@ -1895,11 +1953,16 @@
         st:   { w: 320, h: 200, ow: 960, oh: 600, label: 'st' },
         msx:  { w: 256, h: 212, ow: 768, oh: 636, label: 'msx' },
         p6:   { w: 320, h: 200, ow: 960, oh: 600, label: 'p6' },
-        pc88: { w: 640, h: 200, ow: 960, oh: 720, label: 'pc88' }
+        pc88: { w: 640, h: 200, ow: 960, oh: 720, label: 'pc88' },
+        mz700:{ w: 80, h: 50, ow: 960, oh: 600, label: 'mz700', rw: 320, rh: 200 }
       };
       function vStatus(msg){ $('vidStatus').textContent = msg; }
       function satVal(){ return parseFloat($('vidSat').value) || 1; }
       $('vidSat').addEventListener('input', function(){ $('vidSatVal').textContent = satVal().toFixed(1); });
+      function vidMzFloorVal(){ return parseFloat($('vidMzFloor').value) || 0; }
+      $('vidMzFloor').addEventListener('input', function(){ $('vidMzFloorVal').textContent = vidMzFloorVal().toFixed(2); });
+      function syncMzFloorLab(){ $('vidMzFloorLab').hidden = (V.machine !== 'mz700'); }
+      syncMzFloorLab();
 
       /* Saturation is applied in JS on the pixel array (not via
          ctx.filter) so the result is identical in every browser and
@@ -1957,6 +2020,7 @@
       }
       function grabBase(){
         if (V.machine === 'pc88') return grabFitDisplay(640, 200, 480);
+        if (V.machine === 'mz700') return applySatFloor(grabFit(80, 50), vidMzFloorVal());
         return grabFit(V.mw, V.mh);
       }
       function decidePalette(){
@@ -1980,9 +2044,15 @@
       }
       function convertFrame(){
         var base = grabBase();
-        var r = nearestDither(base, V.mw, V.mh, V.pal);
-        nativeCv.width = V.mw; nativeCv.height = V.mh;
-        nctx.putImageData(new ImageData(r.out, V.mw, V.mh), 0, 0);
+        if (V.machine === 'mz700'){
+          var r = convertMz700(base, base);
+          nativeCv.width = 320; nativeCv.height = 200;
+          nctx.putImageData(new ImageData(r.out, 320, 200), 0, 0);
+        } else {
+          var r2 = nearestDither(base, V.mw, V.mh, V.pal);
+          nativeCv.width = V.mw; nativeCv.height = V.mh;
+          nctx.putImageData(new ImageData(r2.out, V.mw, V.mh), 0, 0);
+        }
         octx.imageSmoothingEnabled = false;
         octx.drawImage(nativeCv, 0, 0, vidOut.width, vidOut.height);
         V.frames++;
@@ -2055,7 +2125,7 @@
         V.running = false;
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
-        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidPickBtn').disabled = false;
         $('vidWrap').classList.add('empty');
         vStatus(msg);
       }
@@ -2090,7 +2160,7 @@
         V.forceMuted = false;
         V.running = true;
         $('vidStart').disabled = true; $('vidStop').disabled = false;
-        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidPickBtn').disabled = true;
+        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidMzFloor').disabled = true; $('vidPickBtn').disabled = true;
         vStatus('再生を開始中…');
         /* iOS only decodes frames for a *playing* video: a paused
            element sits at readyState < 2 forever and every canvas
@@ -2142,7 +2212,7 @@
         if (V.watch){ clearInterval(V.watch); V.watch = null; }
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
-        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidPickBtn').disabled = false;
         if (V.rec && V.rec.state !== 'inactive') V.rec.stop();
       }
       function finalize(){
@@ -2198,7 +2268,7 @@
         if (this.files && this.files[0]) loadVideoFile(this.files[0]);
         this.value = '';
       });
-      $('vidMachine').addEventListener('change', function(){ V.machine = this.value; });
+      $('vidMachine').addEventListener('change', function(){ V.machine = this.value; syncMzFloorLab(); });
       $('vidStart').addEventListener('click', start);
       $('vidStop').addEventListener('click', finish);
       $('vidDl').addEventListener('click', function(){
