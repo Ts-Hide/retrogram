@@ -243,6 +243,10 @@
             <input type="range" id="vidMzFloor" min="0" max="1" step="0.05" value="0.5" />
             <span id="vidMzFloorVal">0.50</span>
           </label>
+          <label class="lab" id="vidMzHueLab" hidden>色相シフト（MZ-700のみ）
+            <input type="range" id="vidMzHue" min="-180" max="180" step="5" value="0" />
+            <span id="vidMzHueVal">0°</span>
+          </label>
         </div>
         <div class="vidctl">
           <button type="button" class="primary" id="vidStart" disabled>変換開始</button>
@@ -324,6 +328,11 @@
             <input type="range" id="mzFloor" min="0" max="1" step="0.05" value="0.5" />
             <span id="mzFloorVal">0.50</span>
             <span class="lab">薄い色を鮮やかにして、パステルが白に潰れるのを防ぎます（0で無効）</span>
+          </label>
+          <label class="mzctl">色相シフト
+            <input type="range" id="mzHue" min="-180" max="180" step="5" value="0" />
+            <span id="mzHueVal">0°</span>
+            <span class="lab">色の向きを回して、落ちるパレット色を選びます（0で無効・創作的な調整）</span>
           </label>
           <div class="cvwrap empty" id="wrap-mz700"><canvas id="cv-mz700" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
           <div class="stats" id="st-mz700"></div>
@@ -890,6 +899,42 @@
       }
       return out;
     }
+    /* Hue shift (degrees, -180..180): rotate every pixel's hue, keeping
+       saturation and value. Achromatic pixels have no hue and are left
+       alone. Unlike the saturation floor (which preserves hue), this is
+       a creative recolouring control: it chooses which palette colour a
+       region lands on, it does not fix readability. Returns a new array;
+       the input is not modified. 0 disables the effect. */
+    function applyHueShift(data, deg){
+      if (!deg) return data;
+      var out = new Uint8ClampedArray(data);
+      var shift = (((deg % 360) + 360) % 360) / 60;   /* in 60-degree sectors */
+      for (var i = 0; i < out.length; i += 4){
+        var r = out[i] / 255, g = out[i + 1] / 255, b = out[i + 2] / 255;
+        var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        var d = mx - mn;
+        if (d === 0) continue;
+        var hh;
+        if (mx === r) hh = ((g - b) / d) % 6;
+        else if (mx === g) hh = (b - r) / d + 2;
+        else hh = (r - g) / d + 4;
+        if (hh < 0) hh += 6;
+        var s = mx === 0 ? 0 : d / mx, v = mx;
+        hh = (hh + shift) % 6;
+        var c = v * s, x = c * (1 - Math.abs((hh % 2) - 1)), m = v - c;
+        var rr, gg, bb;
+        if (hh < 1){ rr = c; gg = x; bb = 0; }
+        else if (hh < 2){ rr = x; gg = c; bb = 0; }
+        else if (hh < 3){ rr = 0; gg = c; bb = x; }
+        else if (hh < 4){ rr = 0; gg = x; bb = c; }
+        else if (hh < 5){ rr = x; gg = 0; bb = c; }
+        else { rr = c; gg = 0; bb = x; }
+        out[i]     = Math.round((rr + m) * 255);
+        out[i + 1] = Math.round((gg + m) * 255);
+        out[i + 2] = Math.round((bb + m) * 255);
+      }
+      return out;
+    }
     // 40x25 cells, each 2x2 blocks, one fg+bg pair per cell from DIGITAL8.
     // Per-cell exhaustive search over all 64 pairs (same as the Python
     // trial): each block takes the nearer of the two colors; the pair
@@ -1043,10 +1088,11 @@
     }
 
     function mzFloorVal(){ return parseFloat($('mzFloor').value) || 0; }
+    function mzHueVal(){ return parseFloat($('mzHue').value) || 0; }
     function runMz700(){
       if (!srcBitmap) return;
       var base = resizeFit(srcBitmap, 80, 50);
-      var r = convertMz700(applySatFloor(base, mzFloorVal()), base);
+      var r = convertMz700(applyHueShift(applySatFloor(base, mzFloorVal()), mzHueVal()), base);
       paintResult('mz700', 320, 200, r.out); showCanvas('wrap-mz700', 'cv-mz700');
       $('st-mz700').innerHTML = '使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>';
       setSwatches('sw-mz700', DIGITAL8.filter(function(_, i){ return r.used[i]; }));
@@ -1059,6 +1105,10 @@
     }
     $('mzFloor').addEventListener('input', function(){
       $('mzFloorVal').textContent = mzFloorVal().toFixed(2);
+      runMz700();
+    });
+    $('mzHue').addEventListener('input', function(){
+      $('mzHueVal').textContent = mzHueVal() + '°';
       runMz700();
     });
 
@@ -1995,7 +2045,12 @@
       $('vidSat').addEventListener('input', function(){ $('vidSatVal').textContent = satVal().toFixed(1); });
       function vidMzFloorVal(){ return parseFloat($('vidMzFloor').value) || 0; }
       $('vidMzFloor').addEventListener('input', function(){ $('vidMzFloorVal').textContent = vidMzFloorVal().toFixed(2); });
-      function syncMzFloorLab(){ $('vidMzFloorLab').hidden = (V.machine !== 'mz700'); }
+      function vidMzHueVal(){ return parseFloat($('vidMzHue').value) || 0; }
+      $('vidMzHue').addEventListener('input', function(){ $('vidMzHueVal').textContent = vidMzHueVal() + '°'; });
+      function syncMzFloorLab(){
+        $('vidMzFloorLab').hidden = (V.machine !== 'mz700');
+        $('vidMzHueLab').hidden = (V.machine !== 'mz700');
+      }
       syncMzFloorLab();
 
       /* Saturation is applied in JS on the pixel array (not via
@@ -2054,7 +2109,7 @@
       }
       function grabBase(){
         if (V.machine === 'pc88') return grabFitDisplay(640, 200, 480);
-        if (V.machine === 'mz700') return applySatFloor(grabFit(80, 50), vidMzFloorVal());
+        if (V.machine === 'mz700') return applyHueShift(applySatFloor(grabFit(80, 50), vidMzFloorVal()), vidMzHueVal());
         return grabFit(V.mw, V.mh);
       }
       function decidePalette(){
@@ -2159,7 +2214,7 @@
         V.running = false;
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
-        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidMzHue').disabled = false; $('vidPickBtn').disabled = false;
         $('vidWrap').classList.add('empty');
         vStatus(msg);
       }
@@ -2194,7 +2249,7 @@
         V.forceMuted = false;
         V.running = true;
         $('vidStart').disabled = true; $('vidStop').disabled = false;
-        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidMzFloor').disabled = true; $('vidPickBtn').disabled = true;
+        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidMzFloor').disabled = true; $('vidMzHue').disabled = true; $('vidPickBtn').disabled = true;
         vStatus('再生を開始中…');
         /* iOS only decodes frames for a *playing* video: a paused
            element sits at readyState < 2 forever and every canvas
@@ -2246,7 +2301,7 @@
         if (V.watch){ clearInterval(V.watch); V.watch = null; }
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
-        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidMzHue').disabled = false; $('vidPickBtn').disabled = false;
         if (V.rec && V.rec.state !== 'inactive') V.rec.stop();
       }
       function finalize(){
