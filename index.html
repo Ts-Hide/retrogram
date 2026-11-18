@@ -323,7 +323,7 @@
         </section>
 
         <section class="card" id="card-mz700">
-          <header><h2>MZ-700 セミグラフィック</h2><span class="spec">320×200 / 80×50ブロック / デジタル8色 / セル単位2色 / ディザなし</span></header>
+          <header><h2>MZ-700 セミグラフィック</h2><span class="spec">320×200 / 80×50ブロック / デジタル8色 / セル単位2色 / ディザなし / フルキャラクタセット切替あり</span></header>
           <label class="mzctl">彩度底上げ
             <input type="range" id="mzFloor" min="0" max="1" step="0.05" value="0.5" />
             <span id="mzFloorVal">0.50</span>
@@ -334,6 +334,13 @@
             <span id="mzHueVal">0°</span>
             <span class="lab">色の向きを回して、落ちるパレット色を選びます（0で無効・創作的な調整）</span>
           </label>
+          <div class="mzctl">表示モード
+            <span class="seg" id="mzModeSeg">
+              <button type="button" data-mzmode="semi" aria-pressed="true">セミグラ</button>
+              <button type="button" data-mzmode="full" aria-pressed="false">フルキャラクタセット</button>
+            </span>
+            <span class="lab">フルキャラクタセットは、セミグラ（2×2ブロック）だけでなく CG ROM の図形文字（ハーフブロック・チェッカー・三角・罫線など52文字）も使います。顔や細部が読みやすくなります。MSE は 320×200 で測ります。</span>
+          </div>
           <div class="cvwrap empty" id="wrap-mz700"><canvas id="cv-mz700" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
           <div class="stats" id="st-mz700"></div>
           <div class="swatches" id="sw-mz700"></div>
@@ -935,6 +942,158 @@
       }
       return out;
     }
+    /* Full-charset (overlay) glyph table: the core geometric glyphs
+       of the MZ-700 CG ROM, as 8 bytes per glyph (one byte per row,
+       MSB = leftmost pixel). These are pure geometric patterns
+       (solid / half / quarter blocks, lines, checkerboards,
+       triangles, diamond / circle / ring) plus the 16 semigraphic
+       patterns 0xF0-0xFF. The patterns are defined by their
+       geometry, so the table carries no font-ROM data; the codes
+       are the real MZ-700 character codes, which is what makes
+       the MZT display correctly on real hardware and in MAME. */
+    var MZFULL_GLYPHS = {
+      0x30: [0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+      0x31: [0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40],
+      0x32: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0xFF],
+      0x33: [0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0xFF],
+      0x34: [0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00],
+      0x35: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10],
+      0x36: [0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+      0x37: [0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0],
+      0x3A: [0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF],
+      0x3B: [0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F],
+      0x3C: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF],
+      0x3D: [0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01],
+      0x3E: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF],
+      0x3F: [0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03],
+      0x42: [0xFF, 0x7F, 0x3F, 0x1F, 0x0F, 0x07, 0x03, 0x01],
+      0x43: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+      0x44: [0x08, 0x1C, 0x3E, 0x7F, 0x3E, 0x1C, 0x08, 0x00],
+      0x47: [0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00],
+      0x48: [0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00],
+      0x4D: [0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF],
+      0x4E: [0x01, 0x03, 0x07, 0x0F, 0x1F, 0x3F, 0x7F, 0xFF],
+      0x56: [0xFF, 0xFE, 0xFC, 0xF8, 0xF0, 0xE0, 0xC0, 0x80],
+      0x58: [0xA0, 0x50, 0xA0, 0x50, 0xA0, 0x50, 0xA0, 0x50],
+      0x5A: [0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55],
+      0x6C: [0x0F, 0x0F, 0x0F, 0x0F, 0xF0, 0xF0, 0xF0, 0xF0],
+      0x70: [0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+      0x71: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+      0x72: [0xFF, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+      0x73: [0xFF, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01],
+      0x74: [0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00],
+      0x75: [0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20],
+      0x7A: [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00],
+      0x7B: [0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0],
+      0x7C: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00],
+      0x7D: [0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02],
+      0xEF: [0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA],
+      0xF0: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+      0xF1: [0x00, 0x70, 0x70, 0x70, 0x00, 0x00, 0x00, 0x00],
+      0xF2: [0x00, 0x07, 0x07, 0x07, 0x00, 0x00, 0x00, 0x00],
+      0xF3: [0x00, 0x77, 0x77, 0x77, 0x00, 0x00, 0x00, 0x00],
+      0xF4: [0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x70, 0x70],
+      0xF5: [0x00, 0x70, 0x70, 0x70, 0x00, 0x70, 0x70, 0x70],
+      0xF6: [0x00, 0x07, 0x07, 0x07, 0x00, 0x70, 0x70, 0x70],
+      0xF7: [0x00, 0x77, 0x77, 0x77, 0x00, 0x70, 0x70, 0x70],
+      0xF8: [0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x07, 0x07],
+      0xF9: [0x00, 0x70, 0x70, 0x70, 0x00, 0x07, 0x07, 0x07],
+      0xFA: [0x00, 0x07, 0x07, 0x07, 0x00, 0x07, 0x07, 0x07],
+      0xFB: [0x00, 0x77, 0x77, 0x77, 0x00, 0x07, 0x07, 0x07],
+      0xFC: [0x00, 0x00, 0x00, 0x00, 0x00, 0x77, 0x77, 0x77],
+      0xFD: [0x00, 0x70, 0x70, 0x70, 0x00, 0x77, 0x77, 0x77],
+      0xFE: [0x00, 0x07, 0x07, 0x07, 0x00, 0x77, 0x77, 0x77],
+      0xFF: [0x00, 0x77, 0x77, 0x77, 0x00, 0x77, 0x77, 0x77],
+    };
+    /* Precomputed per-glyph "on" pixel indices (0..63, row-major) and
+       counts, so the per-cell sums below only touch set pixels. */
+    var MZFULL_LIST = Object.keys(MZFULL_GLYPHS).map(function(k){ return parseInt(k, 10); }).sort(function(a, b){ return a - b; });
+    var MZFULL_ON = MZFULL_LIST.map(function(code){
+      var bytes = MZFULL_GLYPHS[code], idx = [];
+      for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++)
+        if ((bytes[r] >> (7 - c)) & 1) idx.push(r * 8 + c);
+      return idx;
+    });
+    /* (fg,bg) pairs allowed by the grid rule: bg black (any fg), or a
+       solid cell (bg == fg). Same rule as the semigraphic converter. */
+    var MZFULL_PAIRS = [];
+    (function(){ for (var fg = 0; fg < 8; fg++) MZFULL_PAIRS.push([fg, 0]);
+      for (var c = 1; c < 8; c++) MZFULL_PAIRS.push([c, c]); })();
+
+    // Full-charset (overlay) converter: each 8x8 cell is matched against
+    // the whole glyph table at the full 320x200 resolution, choosing the
+    // (glyph, fg, bg) that minimizes the squared error of the cell's 64
+    // pixels. Unlike the semigraphic converter (which only sees 2x2
+    // blocks per cell), this sees the full 8x8 detail, so edges, half
+    // tones (checkerboard) and diagonal shapes survive. The grid rule
+    // still applies (bg black or solid), so no coloured "whiskers".
+    // Solid cells (fg == bg) are normalized to the full block 0x43 so
+    // the TEXT stream stays honest instead of leaking the lowest
+    // candidate code. Returns the same shape as convertMz700, but mse
+    // is measured against the 320x200 refBase.
+    function convertMz700Full(base320, refBase320){
+      refBase320 = refBase320 || base320;
+      var text = new Uint8Array(1000), attr = new Uint8Array(1000);
+      var out = new Uint8ClampedArray(320 * 200 * 4);
+      var used = {}, se = 0, ci = 0, glyphUsed = {};
+      for (var cy = 0; cy < 25; cy++){
+        for (var cx = 0; cx < 40; cx++){
+          var S = new Float64Array(64 * 3), S2 = new Float64Array(64);
+          var totR = 0, totG = 0, totB = 0, totSq = 0;
+          for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++){
+            var i4 = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4, p = py * 8 + px;
+            var r = base320[i4], g = base320[i4 + 1], b = base320[i4 + 2];
+            S[p * 3] = r; S[p * 3 + 1] = g; S[p * 3 + 2] = b;
+            var sq = r * r + g * g + b * b; S2[p] = sq;
+            totR += r; totG += g; totB += b; totSq += sq;
+          }
+          var bestErr = Infinity, bestGi = 0, bestFg = 0, bestBg = 0;
+          for (var gi = 0; gi < MZFULL_LIST.length; gi++){
+            var on = MZFULL_ON[gi], nOn = on.length, nOff = 64 - nOn;
+            var sR = 0, sG = 0, sB = 0, sSq = 0;
+            for (var k = 0; k < nOn; k++){
+              var q = on[k];
+              sR += S[q * 3]; sG += S[q * 3 + 1]; sB += S[q * 3 + 2]; sSq += S2[q];
+            }
+            var oR = totR - sR, oG = totG - sG, oB = totB - sB, oSq = totSq - sSq;
+            for (var pi = 0; pi < MZFULL_PAIRS.length; pi++){
+              var fg = MZFULL_PAIRS[pi][0], bg = MZFULL_PAIRS[pi][1];
+              var fc = DIGITAL8[fg], bc = DIGITAL8[bg];
+              var eOn = sSq - 2 * (sR * fc[0] + sG * fc[1] + sB * fc[2]) + nOn * (fc[0]*fc[0] + fc[1]*fc[1] + fc[2]*fc[2]);
+              var eOff = oSq - 2 * (oR * bc[0] + oG * bc[1] + oB * bc[2]) + nOff * (bc[0]*bc[0] + bc[1]*bc[1] + bc[2]*bc[2]);
+              var e = eOn + eOff;
+              if (e < bestErr){ bestErr = e; bestGi = gi; bestFg = fg; bestBg = bg; }
+            }
+          }
+          var code = (bestFg === bestBg) ? 0x43 : MZFULL_LIST[bestGi];
+          text[ci] = code;
+          attr[ci] = (bestFg << 4) | bestBg;
+          ci++;
+          glyphUsed[code] = 1;
+          used[bestFg] = 1; used[bestBg] = 1;
+          /* Reporting error: the chosen glyph/pair measured against the
+             unmodified 320x200 base, so the MSE stays honest. */
+          var bytes = MZFULL_GLYPHS[MZFULL_LIST[bestGi]];
+          var fgc = DIGITAL8[bestFg], bgc = DIGITAL8[bestBg];
+          var ox = cx * 8, oy = cy * 8;
+          for (var yy = 0; yy < 8; yy++){
+            for (var xx = 0; xx < 8; xx++){
+              var o4 = ((oy + yy) * 320 + (ox + xx)) * 4;
+              var on = (bytes[yy] >> (7 - xx)) & 1;
+              var cc = on ? fgc : bgc;
+              out[o4] = cc[0]; out[o4 + 1] = cc[1]; out[o4 + 2] = cc[2]; out[o4 + 3] = 255;
+              var r4 = ((oy + yy) * 320 + (ox + xx)) * 4;
+              var rr = refBase320[r4], gg = refBase320[r4 + 1], bb = refBase320[r4 + 2];
+              se += (rr-cc[0])*(rr-cc[0]) + (gg-cc[1])*(gg-cc[1]) + (bb-cc[2])*(bb-cc[2]);
+            }
+          }
+        }
+      }
+      return { out: out, text: text, attr: attr,
+        usedCount: Object.keys(used).length, used: used,
+        mse: se / (320 * 200 * 3), glyphCount: Object.keys(glyphUsed).length };
+    }
+
     // 40x25 cells, each 2x2 blocks, one fg+bg pair per cell from DIGITAL8.
     // Per-cell exhaustive search over all 64 pairs (same as the Python
     // trial): each block takes the nearer of the two colors; the pair
@@ -1098,12 +1257,20 @@
 
     function mzFloorVal(){ return parseFloat($('mzFloor').value) || 0; }
     function mzHueVal(){ return parseFloat($('mzHue').value) || 0; }
+    var mzMode = 'semi';
     function runMz700(){
       if (!srcBitmap) return;
-      var base = resizeFit(srcBitmap, 80, 50);
-      var r = convertMz700(applyHueShift(applySatFloor(base, mzFloorVal()), mzHueVal()), base);
+      var r;
+      if (mzMode === 'full'){
+        var base320 = resizeFit(srcBitmap, 320, 200);
+        r = convertMz700Full(applyHueShift(applySatFloor(base320, mzFloorVal()), mzHueVal()), base320);
+        $('st-mz700').innerHTML = 'フルキャラクタセット　使用色 <b>' + r.usedCount + '</b> / 8色　使用文字 <b>' + r.glyphCount + '</b> / 52文字　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>（320×200）';
+      } else {
+        var base = resizeFit(srcBitmap, 80, 50);
+        r = convertMz700(applyHueShift(applySatFloor(base, mzFloorVal()), mzHueVal()), base);
+        $('st-mz700').innerHTML = 'セミグラ　使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>（80×50）';
+      }
       paintResult('mz700', 320, 200, r.out); showCanvas('wrap-mz700', 'cv-mz700');
-      $('st-mz700').innerHTML = '使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>';
       setSwatches('sw-mz700', DIGITAL8.filter(function(_, i){ return r.used[i]; }));
       mzBins = { text: r.text, attr: r.attr };
       var binType = { type: 'application/octet-stream' };
@@ -1112,6 +1279,15 @@
       armLink($('dlMzMzt'), new Blob([buildMztBytes(r.text, r.attr, srcStem)], binType), srcStem + '_mz700.mzt');
       enableDownloads('mz700', true);
     }
+    $('mzModeSeg').addEventListener('click', function(ev){
+      var b = ev.target.closest('button[data-mzmode]');
+      if (!b) return;
+      mzMode = b.getAttribute('data-mzmode');
+      $('mzModeSeg').querySelectorAll('button').forEach(function(x){
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+      });
+      runMz700();
+    });
     $('mzFloor').addEventListener('input', function(){
       $('mzFloorVal').textContent = mzFloorVal().toFixed(2);
       runMz700();
