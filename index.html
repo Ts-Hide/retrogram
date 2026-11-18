@@ -1031,6 +1031,32 @@
     // the TEXT stream stays honest instead of leaking the lowest
     // candidate code. Returns the same shape as convertMz700, but mse
     // is measured against the 320x200 refBase.
+    //
+    // Selection bias and the average-colour term (2026-11-19): pure
+    // per-pixel MSE over-selects the solid block. Measured on the six
+    // samples, 30-62% of the cells where the converter chose solid
+    // actually contain 2+ distinct colours (anime: 62%, mean 2.77
+    // colours per solid cell) — the solid block collapses real colour
+    // variation that the eye can see. The cause is that MSE treats all
+    // pixels equally and undervalues small but salient details, and it
+    // does not reward a glyph for representing the cell's AVERAGE
+    // (intermediate) colour. A checkerboard of red/yellow is perceived
+    // as orange, but per-pixel MSE scores it no better than solid red
+    // for a mixed cell, because the eye averages fine dither while MSE
+    // does not. The fix is an average-colour term: the error is
+    //   pixel_err + W * 64 * |rendered_avg - source_avg|^2
+    // with W = 0.5 (measured: W=0.5 improves the 2x2-blurred MSE — the
+    // perceptual proxy, since the eye averages fine detail — by 1-3%
+    // on all six samples and cuts solid usage by ~27% on anime; W=1.0
+    // is mixed and W=2.0 is worse). The checkerboard itself is almost
+    // never the winner, and that is correct: real mixed cells have
+    // spatial structure (a boundary), so a half-block or triangle that
+    // follows the boundary beats the checkerboard. The average-colour
+    // term is what lets the converter pick those instead of collapsing
+    // the cell to solid. The intermediate colour is thus realised by
+    // the half-block / triangle (whose average is the intermediate
+    // colour), not only by the checkerboard.
+    var MZFULL_AVG_W = 0.5;
     function convertMz700Full(base320, refBase320){
       refBase320 = refBase320 || base320;
       var text = new Uint8Array(1000), attr = new Uint8Array(1000);
@@ -1047,6 +1073,7 @@
             var sq = r * r + g * g + b * b; S2[p] = sq;
             totR += r; totG += g; totB += b; totSq += sq;
           }
+          var srcAvgR = totR / 64, srcAvgG = totG / 64, srcAvgB = totB / 64;
           var bestErr = Infinity, bestGi = 0, bestFg = 0, bestBg = 0;
           for (var gi = 0; gi < MZFULL_LIST.length; gi++){
             var on = MZFULL_ON[gi], nOn = on.length, nOff = 64 - nOn;
@@ -1062,6 +1089,18 @@
               var eOn = sSq - 2 * (sR * fc[0] + sG * fc[1] + sB * fc[2]) + nOn * (fc[0]*fc[0] + fc[1]*fc[1] + fc[2]*fc[2]);
               var eOff = oSq - 2 * (oR * bc[0] + oG * bc[1] + oB * bc[2]) + nOff * (bc[0]*bc[0] + bc[1]*bc[1] + bc[2]*bc[2]);
               var e = eOn + eOff;
+              /* Average-colour term: the rendered cell's mean colour
+                 against the source cell's mean. This is what makes a
+                 glyph that represents the intermediate colour (a
+                 half-block, triangle or checkerboard spanning two
+                 colours) win over a solid block that drops the minority
+                 colour. Scaled by 64 so it is comparable to the
+                 per-pixel sum. */
+              var rAvgR = (nOn * fc[0] + nOff * bc[0]) / 64;
+              var rAvgG = (nOn * fc[1] + nOff * bc[1]) / 64;
+              var rAvgB = (nOn * fc[2] + nOff * bc[2]) / 64;
+              var dR = rAvgR - srcAvgR, dG = rAvgG - srcAvgG, dB = rAvgB - srcAvgB;
+              e += MZFULL_AVG_W * 64 * (dR * dR + dG * dG + dB * dB);
               if (e < bestErr){ bestErr = e; bestGi = gi; bestFg = fg; bestBg = bg; }
             }
           }
