@@ -965,6 +965,15 @@
           var bestErr = Infinity, bestFg = 0, bestBg = 0, bestPick = 0;
           for (var fg = 0; fg < 8; fg++){
             for (var bg = 0; bg < 8; bg++){
+              /* Grid rule: the 1px grid between the blocks is always the
+                 bg colour, so a coloured bg draws coloured lines. The
+                 house rule is that the grid is black (bg 0) or the cell
+                 is solid (bg == fg). A coloured grid with black blocks
+                 leaves single coloured lines sticking out ("whiskers")
+                 and the grid no longer reads as closed squares. The
+                 cost is small (0-5% MSE on the six samples) because
+                 swapping fg/bg is free whenever one of the two is black. */
+              if (bg !== 0 && bg !== fg) continue;
               var err = 0, pick = 0;
               for (var p = 0; p < 4; p++){
                 var q = px[p], c0 = DIGITAL8[fg], c1 = DIGITAL8[bg];
