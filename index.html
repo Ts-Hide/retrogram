@@ -339,7 +339,7 @@
               <button type="button" data-mzmode="semi" aria-pressed="true">セミグラ</button>
               <button type="button" data-mzmode="full" aria-pressed="false">フルキャラクタセット</button>
             </span>
-            <span class="lab">フルキャラクタセットは、セミグラ（2×2ブロック）だけでなく CG ROM の図形文字（ハーフブロック・チェッカー・三角・罫線など52文字）も使います。顔や細部が読みやすくなります。MSE は 320×200 で測ります。</span>
+            <span class="lab">フルキャラクタセットは、セミグラ（2×2ブロック）だけでなく CG ROM の図形文字（ハーフブロック・チェッカー・三角・罫線など53文字）も使います。顔や細部が読みやすくなります。MSE は 320×200 で測ります。</span>
           </div>
           <div class="cvwrap empty" id="wrap-mz700"><canvas id="cv-mz700" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
           <div class="stats" id="st-mz700"></div>
@@ -977,6 +977,7 @@
       0x58: [0xA0, 0x50, 0xA0, 0x50, 0xA0, 0x50, 0xA0, 0x50],
       0x5A: [0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55],
       0x6C: [0x0F, 0x0F, 0x0F, 0x0F, 0xF0, 0xF0, 0xF0, 0xF0],
+      0xCE: [0x3C, 0x7E, 0xFF, 0xDB, 0xFF, 0xE7, 0x7E, 0x3C],
       0x70: [0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
       0x71: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
       0x72: [0xFF, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
@@ -1080,6 +1081,21 @@
        six samples; D = 100000+ starts to hurt portrait/title). */
     var MZFULL_DIAG_W = 50000;
     var MZFULL_DIAG = {0x42:1, 0x4D:1, 0x4E:1, 0x56:1, 0x6C:1, 0x44:1, 0x47:1, 0x48:1};
+    /* Predefined dither set + coherence (2026-11-20): in a large flat
+       area the converter must not pick a different dither glyph in
+       every cell, or the intermediate colour reads as irregular noise.
+       A flat cell therefore chooses from a FIXED dither set by average
+       colour only — 0xF0 (0% fg), 0x36 (25%), 0x5A (50% checkerboard),
+       0xCE (75%), 0x43 (100%) — so the same average always gives the
+       same pattern. A coherence penalty (C) on top makes neighbours
+       agree, fixing the quantisation-boundary flips where a cell's
+       average sits near a level edge. Measured (C=100000): flat-cell
+       disagreement falls to 0-3% on all six samples (was 80% on
+       watanare, 81% on anime); blurred MSE improves on anime (-5%) and
+       watanare (-3%). Non-flat cells use the full converter unchanged. */
+    var MZFULL_DITHER = [0xF0, 0x36, 0x5A, 0xCE, 0x43];
+    var MZFULL_DITHER_N = [0, 16, 32, 48, 64];
+    var MZFULL_COH_W = 500000;
     var MZFULL_CONTRAST2N = [];
     (function(){ for (var fg = 0; fg < 8; fg++){ MZFULL_CONTRAST2N.push([]);
       for (var bg = 0; bg < 8; bg++){
@@ -1090,6 +1106,37 @@
       var text = new Uint8Array(1000), attr = new Uint8Array(1000);
       var out = new Uint8ClampedArray(320 * 200 * 4);
       var used = {}, se = 0, ci = 0, glyphUsed = {};
+      /* Flat map (for the predefined dither): a cell is flat when its
+         3x3 neighbourhood of cell-average colours is uniform (max
+         channel spread < 25). Computed in a pre-pass so the coherence
+         term can see whether neighbours are flat. */
+      var cellAvgR = [], cellAvgG = [], cellAvgB = [], flatMap = [];
+      for (var fy = 0; fy < 25; fy++){
+        cellAvgR.push([]); cellAvgG.push([]); cellAvgB.push([]); flatMap.push([]);
+        for (var fx = 0; fx < 40; fx++){
+          var sr = 0, sg = 0, sb = 0;
+          for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++){
+            var i4 = ((fy * 8 + py) * 320 + (fx * 8 + px)) * 4;
+            sr += base320[i4]; sg += base320[i4 + 1]; sb += base320[i4 + 2];
+          }
+          cellAvgR[fy].push(sr / 64); cellAvgG[fy].push(sg / 64); cellAvgB[fy].push(sb / 64);
+        }
+      }
+      for (var gy = 0; gy < 25; gy++) for (var gx = 0; gx < 40; gx++){
+        var mnR = 255, mxR = 0, mnG = 255, mxG = 0, mnB = 255, mxB = 0;
+        for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++){
+          var ny = gy + dy, nx = gx + dx;
+          if (ny < 0 || ny > 24 || nx < 0 || nx > 39) continue;
+          var ar = cellAvgR[ny][nx], ag = cellAvgG[ny][nx], ab = cellAvgB[ny][nx];
+          if (ar < mnR) mnR = ar; if (ar > mxR) mxR = ar;
+          if (ag < mnG) mnG = ag; if (ag > mxG) mxG = ag;
+          if (ab < mnB) mnB = ab; if (ab > mxB) mxB = ab;
+        }
+        flatMap[gy].push(Math.max(mxR - mnR, mxG - mnG, mxB - mnB) < 25);
+      }
+      /* Choices already made, for the coherence term (scanline order). */
+      var choiceCode = [], choiceFg = [], choiceBg = [];
+      for (var qy = 0; qy < 25; qy++){ choiceCode.push([]); choiceFg.push([]); choiceBg.push([]); }
       for (var cy = 0; cy < 25; cy++){
         for (var cx = 0; cx < 40; cx++){
           var S = new Float64Array(64 * 3), S2 = new Float64Array(64);
@@ -1124,6 +1171,29 @@
           }
           var flatness = Math.max(0, 1 - edge / 100);
           var bestErr = Infinity, bestGi = 0, bestFg = 0, bestBg = 0;
+          if (flatMap[cy][cx]){
+            /* Flat cell: predefined dither by average colour only, plus
+               coherence with already-chosen flat neighbours. The dither
+               glyph is a pure function of the average, so identical
+               averages give identical patterns; coherence fixes the
+               flips at level boundaries. */
+            for (var pi = 0; pi < MZFULL_PAIRS.length; pi++){
+              var fg = MZFULL_PAIRS[pi][0], bg = MZFULL_PAIRS[pi][1];
+              var fc = DIGITAL8[fg], bc = DIGITAL8[bg];
+              for (var di = 0; di < MZFULL_DITHER.length; di++){
+                var nOn = MZFULL_DITHER_N[di], nOff = 64 - nOn;
+                var rAvgR = (nOn * fc[0] + nOff * bc[0]) / 64;
+                var rAvgG = (nOn * fc[1] + nOff * bc[1]) / 64;
+                var rAvgB = (nOn * fc[2] + nOff * bc[2]) / 64;
+                var dR = rAvgR - srcAvgR, dG = rAvgG - srcAvgG, dB = rAvgB - srcAvgB;
+                var e = 64 * (dR * dR + dG * dG + dB * dB);
+                var code = MZFULL_DITHER[di];
+                if (cx > 0 && flatMap[cy][cx - 1] && (choiceCode[cy][cx - 1] !== code || choiceFg[cy][cx - 1] !== fg || choiceBg[cy][cx - 1] !== bg)) e += MZFULL_COH_W;
+                if (cy > 0 && flatMap[cy - 1][cx] && (choiceCode[cy - 1][cx] !== code || choiceFg[cy - 1][cx] !== fg || choiceBg[cy - 1][cx] !== bg)) e += MZFULL_COH_W;
+                if (e < bestErr){ bestErr = e; bestGi = MZFULL_LIST.indexOf(code); bestFg = fg; bestBg = bg; }
+              }
+            }
+          } else {
           for (var gi = 0; gi < MZFULL_LIST.length; gi++){
             var on = MZFULL_ON[gi], nOn = on.length, nOff = 64 - nOn;
             var sR = 0, sG = 0, sB = 0, sSq = 0;
@@ -1158,9 +1228,11 @@
               if (e < bestErr){ bestErr = e; bestGi = gi; bestFg = fg; bestBg = bg; }
             }
           }
+          } /* end else (non-flat cell) */
           var code = (bestFg === bestBg) ? 0x43 : MZFULL_LIST[bestGi];
           text[ci] = code;
           attr[ci] = (bestFg << 4) | bestBg;
+          choiceCode[cy][cx] = code; choiceFg[cy][cx] = bestFg; choiceBg[cy][cx] = bestBg;
           ci++;
           glyphUsed[code] = 1;
           used[bestFg] = 1; used[bestBg] = 1;
@@ -1357,7 +1429,7 @@
       if (mzMode === 'full'){
         var base320 = resizeFit(srcBitmap, 320, 200);
         r = convertMz700Full(applyHueShift(applySatFloor(base320, mzFloorVal()), mzHueVal()), base320);
-        $('st-mz700').innerHTML = 'フルキャラクタセット　使用色 <b>' + r.usedCount + '</b> / 8色　使用文字 <b>' + r.glyphCount + '</b> / 52文字　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>（320×200）';
+        $('st-mz700').innerHTML = 'フルキャラクタセット　使用色 <b>' + r.usedCount + '</b> / 8色　使用文字 <b>' + r.glyphCount + '</b> / 53文字　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>（320×200）';
       } else {
         var base = resizeFit(srcBitmap, 80, 50);
         r = convertMz700(applyHueShift(applySatFloor(base, mzFloorVal()), mzHueVal()), base);
