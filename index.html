@@ -97,6 +97,27 @@
       .p6ctl select { max-width: 100%; }
       .mzctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 14px; }
       .mzctl input[type="range"] { width: 140px; }
+      /* MZ-700 mode cards: the semi/full choice is the primary decision,
+         so it gets two large selectable cards instead of a small toggle. */
+      .mzmodes { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      @media (min-width: 720px) { .mzmodes { grid-template-columns: 1fr 1fr; } }
+      .mzmode {
+        text-align: left; padding: 12px 14px; border-radius: 10px;
+        border: 2px solid var(--line); background: var(--panel); color: var(--ink);
+        display: flex; flex-direction: column; gap: 2px; min-height: 0;
+      }
+      .mzmode b { font-size: 16px; }
+      .mzmode span { font-size: 13px; color: var(--sub); font-weight: 400; line-height: 1.5; }
+      .mzmode[aria-pressed="true"] { border-color: var(--teal); background: var(--panel2); }
+      /* MZ-700 collapsible groups (colour, full details, wall). */
+      details.mzdet { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel2); }
+      details.mzdet summary { cursor: pointer; font-weight: 700; font-size: 14px; min-height: 32px; display: flex; align-items: center; }
+      details.mzdet .mzctl { margin-top: 8px; }
+      details.mzdet .mzctl + .mzctl { margin-top: 6px; }
+      details.mzdet[hidden] { display: none; }
+      .dlgroups { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+      .dlgroup h3 { font-size: 13px; color: var(--sub); margin: 0 0 6px; font-weight: 700; }
+      .dlgroup .dl { margin-top: 0; }
       .cvwrap canvas.tall { aspect-ratio: 640 / 480; }
       figure.src { margin: 18px 0 0; display: none; }
       figure.src.show { display: block; }
@@ -247,6 +268,12 @@
             <input type="range" id="vidMzHue" min="-180" max="180" step="5" value="0" />
             <span id="vidMzHueVal">0°</span>
           </label>
+          <span class="lab" id="vidMzModeLab" hidden>モード（MZ-700のみ）
+            <span class="seg" id="vidMzModeSeg">
+              <button type="button" data-vidmzmode="semi" aria-pressed="true">セミグラ</button>
+              <button type="button" data-vidmzmode="full" aria-pressed="false">フルキャラクタセット</button>
+            </span>
+          </span>
         </div>
         <div class="vidctl">
           <button type="button" class="primary" id="vidStart" disabled>変換開始</button>
@@ -322,38 +349,6 @@
           </div>
         </section>
 
-        <section class="card" id="card-mz700">
-          <header><h2>MZ-700 セミグラフィック</h2><span class="spec">320×200 / 80×50ブロック / デジタル8色 / セル単位2色 / ディザなし / フルキャラクタセット切替あり</span></header>
-          <label class="mzctl">彩度底上げ
-            <input type="range" id="mzFloor" min="0" max="1" step="0.05" value="0.5" />
-            <span id="mzFloorVal">0.50</span>
-            <span class="lab">薄い色を鮮やかにして、パステルが白に潰れるのを防ぎます（0で無効）</span>
-          </label>
-          <label class="mzctl">色相シフト
-            <input type="range" id="mzHue" min="-180" max="180" step="5" value="0" />
-            <span id="mzHueVal">0°</span>
-            <span class="lab">色の向きを回して、落ちるパレット色を選びます（0で無効・創作的な調整）</span>
-          </label>
-          <div class="mzctl">表示モード
-            <span class="seg" id="mzModeSeg">
-              <button type="button" data-mzmode="semi" aria-pressed="true">セミグラ</button>
-              <button type="button" data-mzmode="full" aria-pressed="false">フルキャラクタセット</button>
-            </span>
-            <span class="lab">フルキャラクタセットは、セミグラ（2×2ブロック）だけでなく CG ROM の図形文字（ハーフブロック・チェッカー・三角・罫線など53文字）も使います。顔や細部が読みやすくなります。MSE は 320×200 で測ります。</span>
-          </div>
-          <div class="cvwrap empty" id="wrap-mz700"><canvas id="cv-mz700" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
-          <div class="stats" id="st-mz700"></div>
-          <div class="swatches" id="sw-mz700"></div>
-          <div class="dl">
-            <a class="dllink off" data-dl="native" data-m="mz700" rel="noopener">ネイティブPNG（320×200）</a>
-            <a class="dllink off" data-dl="preview" data-m="mz700" rel="noopener">プレビューPNG（1600×1000）</a>
-            <a class="dllink off" id="dlMzText" rel="noopener">TEXT</a>
-            <a class="dllink off" id="dlMzAttr" rel="noopener">ATTR</a>
-            <a class="dllink off" id="dlMzMzt" rel="noopener">MZT（ビューアー付き）</a>
-          </div>
-          <div class="lab">MZTは小さなZ80ビューアー付きのテープイメージです。実機MZ-700やMAMEで LOAD すると、この画像が表示されます。</div>
-        </section>
-
         <section class="card wide" id="card-fc">
           <header><h2>ファミコン</h2><span class="spec">256×240 / 背景色＋4パレット×3色 / 16×16ブロック割当 / ユニークタイル≤256 / ディザなし</span></header>
           <div class="fcctl">
@@ -386,7 +381,96 @@
         </section>
       </div>
 
-      
+      <!-- MZ-700 dedicated section (moved out of the grid 2026-11-20):
+           two modes, colour controls, full-charset tuning, real-machine
+           downloads and the multi-panel wall no longer fit in one grid
+           card. The mode choice is the primary decision, so it is two
+           large cards at the top; tuning lives in collapsibles. -->
+      <section class="card wide" id="card-mz700">
+        <header><h2>MZ-700</h2><span class="spec">320×200 / デジタル8色 / セル単位2色</span></header>
+        <div class="mzmodes" id="mzModeCards">
+          <button type="button" class="mzmode" data-mzmode="semi" aria-pressed="true">
+            <b>セミグラ</b>
+            <span>80×50ブロック。大きなブロックではっきりした絵に。動画にも対応。</span>
+          </button>
+          <button type="button" class="mzmode" data-mzmode="full" aria-pressed="false">
+            <b>フルキャラクタセット</b>
+            <span>CG ROMの図形文字53文字。顔や細部が読みやすい。静止画のみ。</span>
+          </button>
+        </div>
+        <div class="cvwrap empty" id="wrap-mz700"><canvas id="cv-mz700" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
+        <div class="stats" id="st-mz700"></div>
+        <div class="swatches" id="sw-mz700"></div>
+        <details class="mzdet" open>
+          <summary>色の調整</summary>
+          <label class="mzctl">彩度底上げ
+            <input type="range" id="mzFloor" min="0" max="1" step="0.05" value="0.5" />
+            <span id="mzFloorVal">0.50</span>
+            <span class="lab">薄い色を鮮やかにして、パステルが白に潰れるのを防ぎます（0で無効）</span>
+          </label>
+          <label class="mzctl">色相シフト
+            <input type="range" id="mzHue" min="-180" max="180" step="5" value="0" />
+            <span id="mzHueVal">0°</span>
+            <span class="lab">色の向きを回して、落ちるパレット色を選びます（0で無効・創作的な調整）</span>
+          </label>
+        </details>
+        <details class="mzdet" id="mzFullDetails">
+          <summary>フルキャラクタセットの詳細</summary>
+          <label class="mzctl">中間色の重み
+            <input type="range" id="mzAvgW" min="0" max="1" step="0.05" value="0.5" />
+            <span id="mzAvgWVal">0.50</span>
+            <span class="lab">セルの平均色（中間色）をどれだけ大事にするか。0で画素誤差のみ。</span>
+          </label>
+          <label class="mzctl">斜め線の抑制
+            <input type="range" id="mzDiagW" min="0" max="100000" step="5000" value="50000" />
+            <span id="mzDiagWVal">50000</span>
+            <span class="lab">平らな場所に出る偽の斜め線を抑えます。0で無効。</span>
+          </label>
+          <label class="mzctl">ディザの均一化
+            <input type="range" id="mzCohW" min="0" max="1000000" step="50000" value="500000" />
+            <span id="mzCohWVal">500000</span>
+            <span class="lab">広い塗りで隣のセルと模様をそろえます。0で無効。</span>
+          </label>
+          <label class="mzctl"><input type="checkbox" id="mzEdgeGuided" /> エッジ誘導
+            <span class="lab">エッジのセルでは平均色の重みを下げて、本物の輪郭を守ります。偽エッジは減りますが、色のなめらかさは少し落ちます。</span>
+          </label>
+        </details>
+        <div class="dlgroups">
+          <div class="dlgroup">
+            <h3>画像</h3>
+            <div class="dl">
+              <a class="dllink off" data-dl="native" data-m="mz700" rel="noopener">ネイティブPNG（320×200）</a>
+              <a class="dllink off" data-dl="preview" data-m="mz700" rel="noopener">プレビューPNG（1600×1000）</a>
+            </div>
+          </div>
+          <div class="dlgroup">
+            <h3>実機用</h3>
+            <div class="dl">
+              <a class="dllink off" id="dlMzText" rel="noopener">TEXT</a>
+              <a class="dllink off" id="dlMzAttr" rel="noopener">ATTR</a>
+              <a class="dllink off" id="dlMzMzt" rel="noopener">MZT（ビューアー付き）</a>
+            </div>
+            <div class="lab">MZTは小さなZ80ビューアー付きのテープイメージです。実機MZ-700やMAMEで LOAD すると、この画像が表示されます。</div>
+          </div>
+        </div>
+        <details class="mzdet" id="mzWallDetails">
+          <summary>マルチパネル壁</summary>
+          <div class="mzctl">パネル数
+            <span class="seg" id="mzWallSeg">
+              <button type="button" data-mzwall="1" aria-pressed="true">1×1（なし）</button>
+              <button type="button" data-mzwall="2" aria-pressed="false">2×2（4台）</button>
+              <button type="button" data-mzwall="3" aria-pressed="false">3×3（9台）</button>
+              <button type="button" data-mzwall="4" aria-pressed="false">4×4（16台）</button>
+            </span>
+            <span class="lab">パネル1枚＝MZ-700 1台。壁は全体を1枚として変換してから分割するので、タイルをまたぐ平坦な場所でも継ぎ目が出ません。</span>
+          </div>
+          <div class="cvwrap empty" id="wrap-mzwall"><canvas id="cv-mzwall" width="640" height="400" hidden></canvas><span>パネル数を選ぶと壁のプレビューが表示されます</span></div>
+          <div class="stats" id="st-mzwall"></div>
+          <div class="dl">
+            <button type="button" id="mzWallZip" disabled>壁一式をZIPで保存（タイルごとのTEXT／ATTR／MZT＋壁プレビューPNG）</button>
+          </div>
+        </details>
+      </section>
 
       <p class="note">縮小にはブラウザの補間を使うため、画素値とMSEは Python 版（LANCZOS）のバッチ変換とわずかに異なる場合があります。FCの .nes は NROM の静止画ビューアで、エミュレータで開くとそのまま絵が表示されます。ダウンロードボタンを押すと、表示されたファイル名のまま、その場で保存されます。プレビューPNGは各機種のネイティブ解像度の整数倍で、縦横比はネイティブのままです（PC-8801のみ表示比4:3に補正）。</p>
 
@@ -1101,32 +1185,47 @@
       for (var bg = 0; bg < 8; bg++){
         var dr = DIGITAL8[fg][0]-DIGITAL8[bg][0], dg = DIGITAL8[fg][1]-DIGITAL8[bg][1], db = DIGITAL8[fg][2]-DIGITAL8[bg][2];
         MZFULL_CONTRAST2N[fg].push((dr*dr + dg*dg + db*db) / (3*255*255)); } } })();
-    function convertMz700Full(base320, refBase320){
+    /* Edge-guided average weight (A, 2026-11-20): in a flat cell the
+       average-colour term gets the full weight W, in a strong-edge cell
+       it is reduced to 0.2*W so pixel accuracy dominates and the real
+       edge is preserved. W_eff = W * (0.2 + 0.8 * flatness), where
+       flatness is already computed per cell (1 = flat, 0 = sharp edge).
+       Measured: false edges (2x2 blur) fall on all six samples, but
+       blurred MSE worsens on anime/watanare — a trade-off, so it is
+       opt-in (default off). */
+    function convertMz700Full(base320, refBase320, opts){
       refBase320 = refBase320 || base320;
-      var text = new Uint8Array(1000), attr = new Uint8Array(1000);
-      var out = new Uint8ClampedArray(320 * 200 * 4);
+      opts = opts || {};
+      var avgW = (opts.avgW != null) ? opts.avgW : MZFULL_AVG_W;
+      var diagW = (opts.diagW != null) ? opts.diagW : MZFULL_DIAG_W;
+      var cohW = (opts.cohW != null) ? opts.cohW : MZFULL_COH_W;
+      var edgeGuided = !!opts.edgeGuided;
+      var COLS = opts.cols || 40, ROWS = opts.rows || 25;
+      var W = COLS * 8, H = ROWS * 8;
+      var text = new Uint8Array(COLS * ROWS), attr = new Uint8Array(COLS * ROWS);
+      var out = new Uint8ClampedArray(W * H * 4);
       var used = {}, se = 0, ci = 0, glyphUsed = {};
       /* Flat map (for the predefined dither): a cell is flat when its
          3x3 neighbourhood of cell-average colours is uniform (max
          channel spread < 25). Computed in a pre-pass so the coherence
          term can see whether neighbours are flat. */
       var cellAvgR = [], cellAvgG = [], cellAvgB = [], flatMap = [];
-      for (var fy = 0; fy < 25; fy++){
+      for (var fy = 0; fy < ROWS; fy++){
         cellAvgR.push([]); cellAvgG.push([]); cellAvgB.push([]); flatMap.push([]);
-        for (var fx = 0; fx < 40; fx++){
+        for (var fx = 0; fx < COLS; fx++){
           var sr = 0, sg = 0, sb = 0;
           for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++){
-            var i4 = ((fy * 8 + py) * 320 + (fx * 8 + px)) * 4;
+            var i4 = ((fy * 8 + py) * W + (fx * 8 + px)) * 4;
             sr += base320[i4]; sg += base320[i4 + 1]; sb += base320[i4 + 2];
           }
           cellAvgR[fy].push(sr / 64); cellAvgG[fy].push(sg / 64); cellAvgB[fy].push(sb / 64);
         }
       }
-      for (var gy = 0; gy < 25; gy++) for (var gx = 0; gx < 40; gx++){
+      for (var gy = 0; gy < ROWS; gy++) for (var gx = 0; gx < COLS; gx++){
         var mnR = 255, mxR = 0, mnG = 255, mxG = 0, mnB = 255, mxB = 0;
         for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++){
           var ny = gy + dy, nx = gx + dx;
-          if (ny < 0 || ny > 24 || nx < 0 || nx > 39) continue;
+          if (ny < 0 || ny > ROWS - 1 || nx < 0 || nx > COLS - 1) continue;
           var ar = cellAvgR[ny][nx], ag = cellAvgG[ny][nx], ab = cellAvgB[ny][nx];
           if (ar < mnR) mnR = ar; if (ar > mxR) mxR = ar;
           if (ag < mnG) mnG = ag; if (ag > mxG) mxG = ag;
@@ -1136,13 +1235,13 @@
       }
       /* Choices already made, for the coherence term (scanline order). */
       var choiceCode = [], choiceFg = [], choiceBg = [];
-      for (var qy = 0; qy < 25; qy++){ choiceCode.push([]); choiceFg.push([]); choiceBg.push([]); }
-      for (var cy = 0; cy < 25; cy++){
-        for (var cx = 0; cx < 40; cx++){
+      for (var qy = 0; qy < ROWS; qy++){ choiceCode.push([]); choiceFg.push([]); choiceBg.push([]); }
+      for (var cy = 0; cy < ROWS; cy++){
+        for (var cx = 0; cx < COLS; cx++){
           var S = new Float64Array(64 * 3), S2 = new Float64Array(64);
           var totR = 0, totG = 0, totB = 0, totSq = 0;
           for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++){
-            var i4 = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4, p = py * 8 + px;
+            var i4 = ((cy * 8 + py) * W + (cx * 8 + px)) * 4, p = py * 8 + px;
             var r = base320[i4], g = base320[i4 + 1], b = base320[i4 + 2];
             S[p * 3] = r; S[p * 3 + 1] = g; S[p * 3 + 2] = b;
             var sq = r * r + g * g + b * b; S2[p] = sq;
@@ -1156,14 +1255,14 @@
              100 (a real edge). */
           var edge = 0;
           for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++){
-            var i4 = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4;
+            var i4 = ((cy * 8 + py) * W + (cx * 8 + px)) * 4;
             if (px < 7){
               var dR = base320[i4] - base320[i4 + 4], dG = base320[i4 + 1] - base320[i4 + 5], dB = base320[i4 + 2] - base320[i4 + 6];
               var m = Math.max(Math.abs(dR), Math.abs(dG), Math.abs(dB));
               if (m > edge) edge = m;
             }
             if (py < 7){
-              var j4 = ((cy * 8 + py + 1) * 320 + (cx * 8 + px)) * 4;
+              var j4 = ((cy * 8 + py + 1) * W + (cx * 8 + px)) * 4;
               var eR = base320[i4] - base320[j4], eG = base320[i4 + 1] - base320[j4 + 1], eB = base320[i4 + 2] - base320[j4 + 2];
               var n = Math.max(Math.abs(eR), Math.abs(eG), Math.abs(eB));
               if (n > edge) edge = n;
@@ -1188,8 +1287,8 @@
                 var dR = rAvgR - srcAvgR, dG = rAvgG - srcAvgG, dB = rAvgB - srcAvgB;
                 var e = 64 * (dR * dR + dG * dG + dB * dB);
                 var code = MZFULL_DITHER[di];
-                if (cx > 0 && flatMap[cy][cx - 1] && (choiceCode[cy][cx - 1] !== code || choiceFg[cy][cx - 1] !== fg || choiceBg[cy][cx - 1] !== bg)) e += MZFULL_COH_W;
-                if (cy > 0 && flatMap[cy - 1][cx] && (choiceCode[cy - 1][cx] !== code || choiceFg[cy - 1][cx] !== fg || choiceBg[cy - 1][cx] !== bg)) e += MZFULL_COH_W;
+                if (cx > 0 && flatMap[cy][cx - 1] && (choiceCode[cy][cx - 1] !== code || choiceFg[cy][cx - 1] !== fg || choiceBg[cy][cx - 1] !== bg)) e += cohW;
+                if (cy > 0 && flatMap[cy - 1][cx] && (choiceCode[cy - 1][cx] !== code || choiceFg[cy - 1][cx] !== fg || choiceBg[cy - 1][cx] !== bg)) e += cohW;
                 if (e < bestErr){ bestErr = e; bestGi = MZFULL_LIST.indexOf(code); bestFg = fg; bestBg = bg; }
               }
             }
@@ -1219,12 +1318,13 @@
               var rAvgG = (nOn * fc[1] + nOff * bc[1]) / 64;
               var rAvgB = (nOn * fc[2] + nOff * bc[2]) / 64;
               var dR = rAvgR - srcAvgR, dG = rAvgG - srcAvgG, dB = rAvgB - srcAvgB;
-              e += MZFULL_AVG_W * 64 * (dR * dR + dG * dG + dB * dB);
+              var wEff = edgeGuided ? avgW * (0.2 + 0.8 * flatness) : avgW;
+              e += wEff * 64 * (dR * dR + dG * dG + dB * dB);
               /* Diagonal penalty: a diagonal/curved glyph draws a sharp
                  edge that does not exist in a flat source cell. Only
                  in flat cells, and stronger for high-contrast pairs. */
               if (flatness > 0 && MZFULL_DIAG[MZFULL_LIST[gi]])
-                e += MZFULL_DIAG_W * flatness * MZFULL_CONTRAST2N[fg][bg];
+                e += diagW * flatness * MZFULL_CONTRAST2N[fg][bg];
               if (e < bestErr){ bestErr = e; bestGi = gi; bestFg = fg; bestBg = bg; }
             }
           }
@@ -1243,11 +1343,11 @@
           var ox = cx * 8, oy = cy * 8;
           for (var yy = 0; yy < 8; yy++){
             for (var xx = 0; xx < 8; xx++){
-              var o4 = ((oy + yy) * 320 + (ox + xx)) * 4;
+              var o4 = ((oy + yy) * W + (ox + xx)) * 4;
               var on = (bytes[yy] >> (7 - xx)) & 1;
               var cc = on ? fgc : bgc;
               out[o4] = cc[0]; out[o4 + 1] = cc[1]; out[o4 + 2] = cc[2]; out[o4 + 3] = 255;
-              var r4 = ((oy + yy) * 320 + (ox + xx)) * 4;
+              var r4 = ((oy + yy) * W + (ox + xx)) * 4;
               var rr = refBase320[r4], gg = refBase320[r4 + 1], bb = refBase320[r4 + 2];
               se += (rr-cc[0])*(rr-cc[0]) + (gg-cc[1])*(gg-cc[1]) + (bb-cc[2])*(bb-cc[2]);
             }
@@ -1256,7 +1356,8 @@
       }
       return { out: out, text: text, attr: attr,
         usedCount: Object.keys(used).length, used: used,
-        mse: se / (320 * 200 * 3), glyphCount: Object.keys(glyphUsed).length };
+        mse: se / (W * H * 3), glyphCount: Object.keys(glyphUsed).length,
+        cols: COLS, rows: ROWS, w: W, h: H };
     }
 
     // 40x25 cells, each 2x2 blocks, one fg+bg pair per cell from DIGITAL8.
@@ -1422,13 +1523,20 @@
 
     function mzFloorVal(){ return parseFloat($('mzFloor').value) || 0; }
     function mzHueVal(){ return parseFloat($('mzHue').value) || 0; }
+    function mzAvgWVal(){ return parseFloat($('mzAvgW').value) || 0; }
+    function mzDiagWVal(){ return parseFloat($('mzDiagW').value) || 0; }
+    function mzCohWVal(){ return parseFloat($('mzCohW').value) || 0; }
+    function mzEdgeGuidedVal(){ return $('mzEdgeGuided').checked; }
+    function mzFullOpts(){
+      return { avgW: mzAvgWVal(), diagW: mzDiagWVal(), cohW: mzCohWVal(), edgeGuided: mzEdgeGuidedVal() };
+    }
     var mzMode = 'semi';
     function runMz700(){
       if (!srcBitmap) return;
       var r;
       if (mzMode === 'full'){
         var base320 = resizeFit(srcBitmap, 320, 200);
-        r = convertMz700Full(applyHueShift(applySatFloor(base320, mzFloorVal()), mzHueVal()), base320);
+        r = convertMz700Full(applyHueShift(applySatFloor(base320, mzFloorVal()), mzHueVal()), base320, mzFullOpts());
         $('st-mz700').innerHTML = 'フルキャラクタセット　使用色 <b>' + r.usedCount + '</b> / 8色　使用文字 <b>' + r.glyphCount + '</b> / 53文字　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>（320×200）';
       } else {
         var base = resizeFit(srcBitmap, 80, 50);
@@ -1443,14 +1551,19 @@
       armLink($('dlMzAttr'), new Blob([r.attr], binType), srcStem + '_mz700_attr.bin');
       armLink($('dlMzMzt'), new Blob([buildMztBytes(r.text, r.attr, srcStem)], binType), srcStem + '_mz700.mzt');
       enableDownloads('mz700', true);
+      /* The wall is 16x the work of one image at 4x4, so only convert
+         it while its panel is open; opening the panel converts it. */
+      if ($('mzWallDetails').open) runMzWall();
     }
-    $('mzModeSeg').addEventListener('click', function(ev){
+    function syncMzFullDetails(){ $('mzFullDetails').hidden = (mzMode !== 'full'); }
+    $('mzModeCards').addEventListener('click', function(ev){
       var b = ev.target.closest('button[data-mzmode]');
       if (!b) return;
       mzMode = b.getAttribute('data-mzmode');
-      $('mzModeSeg').querySelectorAll('button').forEach(function(x){
+      $('mzModeCards').querySelectorAll('button').forEach(function(x){
         x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
       });
+      syncMzFullDetails();
       runMz700();
     });
     $('mzFloor').addEventListener('input', function(){
@@ -1460,6 +1573,111 @@
     $('mzHue').addEventListener('input', function(){
       $('mzHueVal').textContent = mzHueVal() + '°';
       runMz700();
+    });
+    $('mzAvgW').addEventListener('input', function(){
+      $('mzAvgWVal').textContent = mzAvgWVal().toFixed(2);
+      runMz700();
+    });
+    $('mzDiagW').addEventListener('input', function(){
+      $('mzDiagWVal').textContent = mzDiagWVal();
+      runMz700();
+    });
+    $('mzCohW').addEventListener('input', function(){
+      $('mzCohWVal').textContent = mzCohWVal();
+      runMz700();
+    });
+    $('mzEdgeGuided').addEventListener('change', function(){ runMz700(); });
+    syncMzFullDetails();
+
+    /* ============ MZ-700 multi-panel wall ============ */
+    var mzWallN = 1;
+    var mzWallData = null;   /* {n, text, attr, out, w, h, mse} for the ZIP */
+    function runMzWall(){
+      if (!srcBitmap || mzWallN < 2){ mzWallData = null; $('mzWallZip').disabled = true; return; }
+      var n = mzWallN;
+      var W = n * 320, H = n * 200;
+      var wallBase = resizeFit(srcBitmap, W, H);
+      wallBase = applyHueShift(applySatFloor(wallBase, mzFloorVal()), mzHueVal());
+      var r, mse;
+      if (mzMode === 'full'){
+        r = convertMz700Full(wallBase, resizeFit(srcBitmap, W, H), Object.assign(mzFullOpts(), { cols: n * 40, rows: n * 25 }));
+        mse = r.mse;
+      } else {
+        /* Semigraphics is purely local (no coherence), so per-tile
+           conversion is identical to a global one. Convert each tile
+           separately with the existing 80x50 converter. */
+        var text = new Uint8Array(n * n * 1000), attr = new Uint8Array(n * n * 1000);
+        var out = new Uint8ClampedArray(W * H * 4);
+        var se = 0, used = {};
+        for (var ty = 0; ty < n; ty++) for (var tx = 0; tx < n; tx++){
+          var tileBase = new Uint8ClampedArray(80 * 50 * 4);
+          for (var yy = 0; yy < 50; yy++) for (var xx = 0; xx < 80; xx++){
+            var s4 = ((ty * 50 + yy) * W + (tx * 80 + xx)) * 4, d4 = (yy * 80 + xx) * 4;
+            tileBase[d4] = wallBase[s4]; tileBase[d4 + 1] = wallBase[s4 + 1]; tileBase[d4 + 2] = wallBase[s4 + 2]; tileBase[d4 + 3] = 255;
+          }
+          var tr = convertMz700(tileBase, tileBase);
+          var off = (ty * n + tx) * 1000;
+          text.set(tr.text, off); attr.set(tr.attr, off);
+          for (var oy = 0; oy < 200; oy++) for (var ox = 0; ox < 320; ox++){
+            var s4b = (oy * 320 + ox) * 4, d4b = ((ty * 200 + oy) * W + (tx * 320 + ox)) * 4;
+            out[d4b] = tr.out[s4b]; out[d4b + 1] = tr.out[s4b + 1]; out[d4b + 2] = tr.out[s4b + 2]; out[d4b + 3] = 255;
+          }
+          se += tr.mse * 4000 * 3;
+          Object.keys(tr.used).forEach(function(k){ used[k] = 1; });
+        }
+        r = { text: text, attr: attr, out: out, usedCount: Object.keys(used).length, used: used, cols: n * 40, rows: n * 25, w: W, h: H };
+        mse = se / (W * H * 3);
+      }
+      mzWallData = { n: n, text: r.text, attr: r.attr, out: r.out, w: W, h: H, mse: mse };
+      /* Wall preview: tiles with an 8px black bezel between them. */
+      var BEZEL = 8;
+      var pw = W + (n - 1) * BEZEL, ph = H + (n - 1) * BEZEL;
+      var cv = $('cv-mzwall'); cv.width = pw; cv.height = ph;
+      var ctx = cv.getContext('2d');
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, pw, ph);
+      var tmp = document.createElement('canvas'); tmp.width = W; tmp.height = H;
+      tmp.getContext('2d').putImageData(new ImageData(r.out, W, H), 0, 0);
+      for (var wy = 0; wy < n; wy++) for (var wx = 0; wx < n; wx++){
+        ctx.drawImage(tmp, wx * 320, wy * 200, 320, 200, wx * (320 + BEZEL), wy * (200 + BEZEL), 320, 200);
+      }
+      showCanvas('wrap-mzwall', 'cv-mzwall');
+      $('st-mzwall').textContent = (mzMode === 'full' ? 'フルキャラクタセット' : 'セミグラ') + '　' + n + '×' + n + '（' + (n * n) + '台）　' + W + '×' + H + '　MSE ' + mse.toFixed(1);
+      $('mzWallZip').disabled = false;
+    }
+    $('mzWallSeg').addEventListener('click', function(ev){
+      var b = ev.target.closest('button[data-mzwall]');
+      if (!b) return;
+      mzWallN = parseInt(b.getAttribute('data-mzwall'), 10);
+      $('mzWallSeg').querySelectorAll('button').forEach(function(x){
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+      });
+      if (mzWallN < 2){ mzWallData = null; $('mzWallZip').disabled = true; $('st-mzwall').textContent = ''; }
+      else runMzWall();
+    });
+    $('mzWallDetails').addEventListener('toggle', function(){
+      if ($('mzWallDetails').open && mzWallN >= 2) runMzWall();
+    });
+    $('mzWallZip').addEventListener('click', function(){
+      if (!mzWallData || !srcBitmap) return;
+      var n = mzWallData.n, entries = [];
+      var binType = { type: 'application/octet-stream' };
+      for (var ty = 0; ty < n; ty++) for (var tx = 0; tx < n; tx++){
+        var tileText = new Uint8Array(1000), tileAttr = new Uint8Array(1000);
+        for (var cy = 0; cy < 25; cy++) for (var cx = 0; cx < 40; cx++){
+          var s = (ty * 25 + cy) * (n * 40) + (tx * 40 + cx), d = cy * 40 + cx;
+          tileText[d] = mzWallData.text[s]; tileAttr[d] = mzWallData.attr[s];
+        }
+        var tag = '_wall_r' + (ty + 1) + 'c' + (tx + 1);
+        entries.push({ name: srcStem + tag + '_text.bin', data: tileText });
+        entries.push({ name: srcStem + tag + '_attr.bin', data: tileAttr });
+        entries.push({ name: srcStem + tag + '.mzt', data: buildMztBytes(tileText, tileAttr, srcStem + tag) });
+      }
+      var pw = mzWallData.w + (n - 1) * 8, ph = mzWallData.h + (n - 1) * 8;
+      var cv = $('cv-mzwall');
+      canvasPngBytes(cv).then(function(png){
+        if (png) entries.push({ name: srcStem + '_wall_' + n + 'x' + n + '_preview.png', data: png });
+        openZipSheet('mzwall', entries, srcStem + '_mz700_wall_' + n + 'x' + n + '.zip');
+      });
     });
 
     function runP6(){
@@ -2397,10 +2615,21 @@
       $('vidMzFloor').addEventListener('input', function(){ $('vidMzFloorVal').textContent = vidMzFloorVal().toFixed(2); });
       function vidMzHueVal(){ return parseFloat($('vidMzHue').value) || 0; }
       $('vidMzHue').addEventListener('input', function(){ $('vidMzHueVal').textContent = vidMzHueVal() + '°'; });
+      var vidMzMode = 'semi';
       function syncMzFloorLab(){
-        $('vidMzFloorLab').hidden = (V.machine !== 'mz700');
-        $('vidMzHueLab').hidden = (V.machine !== 'mz700');
+        var isMz = (V.machine === 'mz700');
+        $('vidMzFloorLab').hidden = !isMz;
+        $('vidMzHueLab').hidden = !isMz;
+        $('vidMzModeLab').hidden = !isMz;
       }
+      $('vidMzModeSeg').addEventListener('click', function(ev){
+        var b = ev.target.closest('button[data-vidmzmode]');
+        if (!b) return;
+        vidMzMode = b.getAttribute('data-vidmzmode');
+        $('vidMzModeSeg').querySelectorAll('button').forEach(function(x){
+          x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+        });
+      });
       syncMzFloorLab();
 
       /* Saturation is applied in JS on the pixel array (not via
@@ -2459,7 +2688,15 @@
       }
       function grabBase(){
         if (V.machine === 'pc88') return grabFitDisplay(640, 200, 480);
-        if (V.machine === 'mz700') return applyHueShift(applySatFloor(grabFit(80, 50), vidMzFloorVal()), vidMzHueVal());
+        if (V.machine === 'mz700'){
+          /* Full-charset video uses the 320x200 base (the converter works
+             at full resolution); semigraphics uses the 80x50 base.
+             Tuning (W/D/C, edge-guided) stays at the verified defaults
+             for video — per-frame adjustment would be too slow to tune
+             live, and the defaults are the measured optimum. */
+          var w = (vidMzMode === 'full') ? 320 : 80, h = (vidMzMode === 'full') ? 200 : 50;
+          return applyHueShift(applySatFloor(grabFit(w, h), vidMzFloorVal()), vidMzHueVal());
+        }
         return grabFit(V.mw, V.mh);
       }
       function decidePalette(){
@@ -2484,7 +2721,14 @@
       function convertFrame(){
         var base = grabBase();
         if (V.machine === 'mz700'){
-          var r = convertMz700(base, base);
+          var r;
+          if (vidMzMode === 'full'){
+            var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+            r = convertMz700Full(base, base, {});
+            if (t0 && !V.fullMs) V.fullMs = performance.now() - t0;
+          } else {
+            r = convertMz700(base, base);
+          }
           nativeCv.width = 320; nativeCv.height = 200;
           nctx.putImageData(new ImageData(r.out, 320, 200), 0, 0);
         } else {
@@ -2495,8 +2739,9 @@
         octx.imageSmoothingEnabled = false;
         octx.drawImage(nativeCv, 0, 0, vidOut.width, vidOut.height);
         V.frames++;
+        var extra = (V.machine === 'mz700' && vidMzMode === 'full' && V.fullMs) ? '　1フレーム ' + V.fullMs.toFixed(0) + 'ms' : '';
         vStatus('変換中… ' + vidSrc.currentTime.toFixed(1) + '秒 / ' +
-          Math.min(vidSrc.duration || 0, MAXSEC).toFixed(1) + '秒（' + V.frames + 'フレーム）');
+          Math.min(vidSrc.duration || 0, MAXSEC).toFixed(1) + '秒（' + V.frames + 'フレーム）' + extra);
       }
       function frameLoop(){
         if (!V.running) return;
@@ -2564,7 +2809,7 @@
         V.running = false;
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
-        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidMzHue').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidMzHue').disabled = false; document.querySelectorAll('#vidMzModeSeg button').forEach(function(b){ b.disabled = false; }); $('vidPickBtn').disabled = false;
         $('vidWrap').classList.add('empty');
         vStatus(msg);
       }
@@ -2599,7 +2844,7 @@
         V.forceMuted = false;
         V.running = true;
         $('vidStart').disabled = true; $('vidStop').disabled = false;
-        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidMzFloor').disabled = true; $('vidMzHue').disabled = true; $('vidPickBtn').disabled = true;
+        $('vidMachine').disabled = true; $('vidSat').disabled = true; $('vidMzFloor').disabled = true; $('vidMzHue').disabled = true; document.querySelectorAll('#vidMzModeSeg button').forEach(function(b){ b.disabled = true; }); $('vidPickBtn').disabled = true;
         vStatus('再生を開始中…');
         /* iOS only decodes frames for a *playing* video: a paused
            element sits at readyState < 2 forever and every canvas
@@ -2651,7 +2896,7 @@
         if (V.watch){ clearInterval(V.watch); V.watch = null; }
         vidSrc.pause();
         $('vidStart').disabled = false; $('vidStop').disabled = true;
-        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidMzHue').disabled = false; $('vidPickBtn').disabled = false;
+        $('vidMachine').disabled = false; $('vidSat').disabled = false; $('vidMzFloor').disabled = false; $('vidMzHue').disabled = false; document.querySelectorAll('#vidMzModeSeg button').forEach(function(b){ b.disabled = false; }); $('vidPickBtn').disabled = false;
         if (V.rec && V.rec.state !== 'inactive') V.rec.stop();
       }
       function finalize(){
