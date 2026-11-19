@@ -457,8 +457,7 @@
           <summary>マルチパネル壁</summary>
           <div class="mzctl">パネル数
             <span class="seg" id="mzWallSeg">
-              <button type="button" data-mzwall="1" aria-pressed="true">1×1（なし）</button>
-              <button type="button" data-mzwall="2" aria-pressed="false">2×2（4台）</button>
+              <button type="button" data-mzwall="2" aria-pressed="true">2×2（4台）</button>
               <button type="button" data-mzwall="3" aria-pressed="false">3×3（9台）</button>
               <button type="button" data-mzwall="4" aria-pressed="false">4×4（16台）</button>
             </span>
@@ -1590,10 +1589,12 @@
     syncMzFullDetails();
 
     /* ============ MZ-700 multi-panel wall ============ */
-    var mzWallN = 1;
+    /* No 1x1 option: closing this panel is the "off" state, so the
+       panel always shows a wall when open. Default 2x2. */
+    var mzWallN = 2;
     var mzWallData = null;   /* {n, text, attr, out, w, h, mse} for the ZIP */
     function runMzWall(){
-      if (!srcBitmap || mzWallN < 2){ mzWallData = null; $('mzWallZip').disabled = true; return; }
+      if (!srcBitmap){ mzWallData = null; $('mzWallZip').disabled = true; return; }
       var n = mzWallN;
       var W = n * 320, H = n * 200;
       var wallBase = resizeFit(srcBitmap, W, H);
@@ -1605,15 +1606,24 @@
       } else {
         /* Semigraphics is purely local (no coherence), so per-tile
            conversion is identical to a global one. Convert each tile
-           separately with the existing 80x50 converter. */
+           separately with the existing 80x50 converter. Each tile's
+           320x200 region of the wall base is downsampled 4x4 to 80x50.
+           (Bug fix 2026-11-20: the first version read wallBase as if
+           it were N*80 x N*50, but it is N*320 x N*200, so only the
+           top-left corner was converted and shown enlarged.) */
         var text = new Uint8Array(n * n * 1000), attr = new Uint8Array(n * n * 1000);
         var out = new Uint8ClampedArray(W * H * 4);
-        var se = 0, used = {};
+        var used = {};
         for (var ty = 0; ty < n; ty++) for (var tx = 0; tx < n; tx++){
           var tileBase = new Uint8ClampedArray(80 * 50 * 4);
-          for (var yy = 0; yy < 50; yy++) for (var xx = 0; xx < 80; xx++){
-            var s4 = ((ty * 50 + yy) * W + (tx * 80 + xx)) * 4, d4 = (yy * 80 + xx) * 4;
-            tileBase[d4] = wallBase[s4]; tileBase[d4 + 1] = wallBase[s4 + 1]; tileBase[d4 + 2] = wallBase[s4 + 2]; tileBase[d4 + 3] = 255;
+          for (var by = 0; by < 50; by++) for (var bx = 0; bx < 80; bx++){
+            var sr = 0, sg = 0, sb = 0;
+            for (var dy = 0; dy < 4; dy++) for (var dx = 0; dx < 4; dx++){
+              var s4 = ((ty * 200 + by * 4 + dy) * W + (tx * 320 + bx * 4 + dx)) * 4;
+              sr += wallBase[s4]; sg += wallBase[s4 + 1]; sb += wallBase[s4 + 2];
+            }
+            var d4 = (by * 80 + bx) * 4;
+            tileBase[d4] = sr / 16; tileBase[d4 + 1] = sg / 16; tileBase[d4 + 2] = sb / 16; tileBase[d4 + 3] = 255;
           }
           var tr = convertMz700(tileBase, tileBase);
           var off = (ty * n + tx) * 1000;
@@ -1622,10 +1632,20 @@
             var s4b = (oy * 320 + ox) * 4, d4b = ((ty * 200 + oy) * W + (tx * 320 + ox)) * 4;
             out[d4b] = tr.out[s4b]; out[d4b + 1] = tr.out[s4b + 1]; out[d4b + 2] = tr.out[s4b + 2]; out[d4b + 3] = 255;
           }
-          se += tr.mse * 4000 * 3;
           Object.keys(tr.used).forEach(function(k){ used[k] = 1; });
         }
         r = { text: text, attr: attr, out: out, usedCount: Object.keys(used).length, used: used, cols: n * 40, rows: n * 25, w: W, h: H };
+        /* Wall MSE: compare the whole wall render against the
+           unprocessed wall reference, pixel by pixel. (Bug fix
+           2026-11-20: the first version summed tr.mse * 4000 * 3,
+           but tr.mse is a mean over the 80x50 base, not the 320x200
+           render, so it reported 405.7 where the true value is ~8660.) */
+        var refBase = resizeFit(srcBitmap, W, H);
+        var se = 0;
+        for (var i = 0; i < W * H * 4; i += 4){
+          var d0 = out[i] - refBase[i], d1 = out[i + 1] - refBase[i + 1], d2 = out[i + 2] - refBase[i + 2];
+          se += d0 * d0 + d1 * d1 + d2 * d2;
+        }
         mse = se / (W * H * 3);
       }
       mzWallData = { n: n, text: r.text, attr: r.attr, out: r.out, w: W, h: H, mse: mse };
@@ -1651,11 +1671,10 @@
       $('mzWallSeg').querySelectorAll('button').forEach(function(x){
         x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
       });
-      if (mzWallN < 2){ mzWallData = null; $('mzWallZip').disabled = true; $('st-mzwall').textContent = ''; }
-      else runMzWall();
+      runMzWall();
     });
     $('mzWallDetails').addEventListener('toggle', function(){
-      if ($('mzWallDetails').open && mzWallN >= 2) runMzWall();
+      if ($('mzWallDetails').open) runMzWall();
     });
     $('mzWallZip').addEventListener('click', function(){
       if (!mzWallData || !srcBitmap) return;
