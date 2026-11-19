@@ -1014,11 +1014,17 @@
         if ((bytes[r] >> (7 - c)) & 1) idx.push(r * 8 + c);
       return idx;
     });
-    /* (fg,bg) pairs allowed by the grid rule: bg black (any fg), or a
-       solid cell (bg == fg). Same rule as the semigraphic converter. */
+    /* (fg,bg) pairs allowed by the grid rule. Refined 2026-11-19 after
+       the whisker test sheet (all 64 pairs x 4 semigraphic glyphs):
+       the only bad case is a BLACK foreground on a COLOURED background
+       (fg 0, bg != 0) — the coloured grid lines float on the black
+       blocks like whiskers. Every other coloured-bg pair is fine: the
+       grid reads as a tile/frame, or is hidden in the unlit quadrants.
+       So all 64 pairs are allowed except the 7 with fg 0 and bg != 0.
+       Same rule as the semigraphic converter. */
     var MZFULL_PAIRS = [];
-    (function(){ for (var fg = 0; fg < 8; fg++) MZFULL_PAIRS.push([fg, 0]);
-      for (var c = 1; c < 8; c++) MZFULL_PAIRS.push([c, c]); })();
+    (function(){ for (var fg = 0; fg < 8; fg++) for (var bg = 0; bg < 8; bg++)
+      if (!(fg === 0 && bg !== 0)) MZFULL_PAIRS.push([fg, bg]); })();
 
     // Full-charset (overlay) converter: each 8x8 cell is matched against
     // the whole glyph table at the full 320x200 resolution, choosing the
@@ -1026,7 +1032,8 @@
     // pixels. Unlike the semigraphic converter (which only sees 2x2
     // blocks per cell), this sees the full 8x8 detail, so edges, half
     // tones (checkerboard) and diagonal shapes survive. The grid rule
-    // still applies (bg black or solid), so no coloured "whiskers".
+    // still applies (only fg 0 on a coloured bg is excluded), so no
+    // coloured "whiskers".
     // Solid cells (fg == bg) are normalized to the full block 0x43 so
     // the TEXT stream stays honest instead of leaking the lowest
     // candidate code. Returns the same shape as convertMz700, but mse
@@ -1163,15 +1170,15 @@
           var bestErr = Infinity, bestFg = 0, bestBg = 0, bestPick = 0;
           for (var fg = 0; fg < 8; fg++){
             for (var bg = 0; bg < 8; bg++){
-              /* Grid rule: the 1px grid between the blocks is always the
-                 bg colour, so a coloured bg draws coloured lines. The
-                 house rule is that the grid is black (bg 0) or the cell
-                 is solid (bg == fg). A coloured grid with black blocks
-                 leaves single coloured lines sticking out ("whiskers")
-                 and the grid no longer reads as closed squares. The
-                 cost is small (0-5% MSE on the six samples) because
-                 swapping fg/bg is free whenever one of the two is black. */
-              if (bg !== 0 && bg !== fg) continue;
+              /* Grid rule (refined 2026-11-19, whisker test sheet): the
+                 1px grid between the blocks is always the bg colour.
+                 The only bad case is a BLACK foreground on a COLOURED
+                 background (fg 0, bg != 0) — the coloured grid lines
+                 float on the black blocks like whiskers. Every other
+                 coloured-bg pair is fine: the grid reads as a tile or
+                 frame, or is hidden in the unlit quadrants. So only
+                 fg 0 with bg != 0 is excluded. */
+              if (fg === 0 && bg !== 0) continue;
               var err = 0, pick = 0;
               for (var p = 0; p < 4; p++){
                 var q = px[p], c0 = DIGITAL8[fg], c1 = DIGITAL8[bg];
