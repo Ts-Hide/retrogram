@@ -1064,6 +1064,27 @@
     // the half-block / triangle (whose average is the intermediate
     // colour), not only by the checkerboard.
     var MZFULL_AVG_W = 0.5;
+    /* Diagonal-glyph penalty (2026-11-19): the average-colour term lets
+       a triangle or diagonal glyph win in a FLAT cell just because its
+       average matches, but its sharp diagonal edge is a false edge —
+       the source has no diagonal there, so the outline looks fragmented
+       and noisy. Measured: in flat cells, diagonal glyphs were used in
+       39% of watanare's flat cells, 13% of anime/portrait's. The fix is
+       an edge-aware penalty, applied only to the diagonal/curved glyphs
+       (triangles, diamond, circle, ring, diagonal split), only in flat
+       cells, and scaled by the fg/bg contrast (a high-contrast pair
+       makes the false edge more visible). A real edge in the source
+       removes the penalty, so diagonals are still used where they
+       belong. D = 50000 (measured: flat-diagonal use falls to ~11% on
+       watanare and ~5% on anime, blurred MSE improves or holds on all
+       six samples; D = 100000+ starts to hurt portrait/title). */
+    var MZFULL_DIAG_W = 50000;
+    var MZFULL_DIAG = {0x42:1, 0x4D:1, 0x4E:1, 0x56:1, 0x6C:1, 0x44:1, 0x47:1, 0x48:1};
+    var MZFULL_CONTRAST2N = [];
+    (function(){ for (var fg = 0; fg < 8; fg++){ MZFULL_CONTRAST2N.push([]);
+      for (var bg = 0; bg < 8; bg++){
+        var dr = DIGITAL8[fg][0]-DIGITAL8[bg][0], dg = DIGITAL8[fg][1]-DIGITAL8[bg][1], db = DIGITAL8[fg][2]-DIGITAL8[bg][2];
+        MZFULL_CONTRAST2N[fg].push((dr*dr + dg*dg + db*db) / (3*255*255)); } } })();
     function convertMz700Full(base320, refBase320){
       refBase320 = refBase320 || base320;
       var text = new Uint8Array(1000), attr = new Uint8Array(1000);
@@ -1081,6 +1102,27 @@
             totR += r; totG += g; totB += b; totSq += sq;
           }
           var srcAvgR = totR / 64, srcAvgG = totG / 64, srcAvgB = totB / 64;
+          /* Edge strength of this source cell: the largest colour step
+             between adjacent pixels. A sharp boundary gives a large
+             step; a smooth gradient or texture gives a small one.
+             flatness is 1 for a flat cell and 0 once the step reaches
+             100 (a real edge). */
+          var edge = 0;
+          for (var py = 0; py < 8; py++) for (var px = 0; px < 8; px++){
+            var i4 = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 4;
+            if (px < 7){
+              var dR = base320[i4] - base320[i4 + 4], dG = base320[i4 + 1] - base320[i4 + 5], dB = base320[i4 + 2] - base320[i4 + 6];
+              var m = Math.max(Math.abs(dR), Math.abs(dG), Math.abs(dB));
+              if (m > edge) edge = m;
+            }
+            if (py < 7){
+              var j4 = ((cy * 8 + py + 1) * 320 + (cx * 8 + px)) * 4;
+              var eR = base320[i4] - base320[j4], eG = base320[i4 + 1] - base320[j4 + 1], eB = base320[i4 + 2] - base320[j4 + 2];
+              var n = Math.max(Math.abs(eR), Math.abs(eG), Math.abs(eB));
+              if (n > edge) edge = n;
+            }
+          }
+          var flatness = Math.max(0, 1 - edge / 100);
           var bestErr = Infinity, bestGi = 0, bestFg = 0, bestBg = 0;
           for (var gi = 0; gi < MZFULL_LIST.length; gi++){
             var on = MZFULL_ON[gi], nOn = on.length, nOff = 64 - nOn;
@@ -1108,6 +1150,11 @@
               var rAvgB = (nOn * fc[2] + nOff * bc[2]) / 64;
               var dR = rAvgR - srcAvgR, dG = rAvgG - srcAvgG, dB = rAvgB - srcAvgB;
               e += MZFULL_AVG_W * 64 * (dR * dR + dG * dG + dB * dB);
+              /* Diagonal penalty: a diagonal/curved glyph draws a sharp
+                 edge that does not exist in a flat source cell. Only
+                 in flat cells, and stronger for high-contrast pairs. */
+              if (flatness > 0 && MZFULL_DIAG[MZFULL_LIST[gi]])
+                e += MZFULL_DIAG_W * flatness * MZFULL_CONTRAST2N[fg][bg];
               if (e < bestErr){ bestErr = e; bestGi = gi; bestFg = fg; bestBg = bg; }
             }
           }
