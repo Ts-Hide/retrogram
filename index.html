@@ -351,7 +351,19 @@
         </section>
 
         <section class="card" id="card-88">
-          <header><h2>PC-8801 V1モード</h2><span class="spec">640×200 / デジタル8色固定 / Bayer 8×8 / 表示は縦2.4倍（4:3）に補正</span></header>
+          <header><h2>PC-8801 V1モード</h2><span class="spec">640×200 / デジタル8色固定 / Bayer 8×8 またはタイルペイント / 表示は縦2.4倍（4:3）に補正</span></header>
+          <label class="p6ctl">変換モード
+            <select id="pc88mode">
+              <option value="bayer" selected>通常（Bayer 8×8 ディザ）</option>
+              <option value="tile">タイルペイント（輪郭＋中間色タイル）</option>
+            </select>
+          </label>
+          <div class="mzctl" id="pc88tileCtl" hidden>
+            <label>輪郭のしきい値 <span id="pc88edgeVal">32</span>
+              <input type="range" id="pc88edge" min="16" max="96" step="1" value="32">
+            </label>
+            <p class="hint">小さいほど線が増えます。輪郭は非極大値抑制（NMS）で1画素に細線化しています。タイルは12×4ブロック、模様は3×1画素のセルです。</p>
+          </div>
           <div class="cvwrap empty" id="wrap-88"><canvas id="cv-88" class="tall" width="640" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
           <div class="stats" id="st-88"></div>
           <div class="swatches" id="sw-88"></div>
@@ -1080,6 +1092,131 @@
                mse: se / (n * 3), totalErr: se, blurMse: blurMse2(out, base, w, h) };
     }
 
+    // Tile-paint conversion for PC-8801 V1 (640x200, DIGITAL8 fixed).
+    // Same outline + intermediate-color-tile pipeline as tilePaintP6, but
+    // tuned for the V1 framebuffer whose pixels are 2.4x taller than wide
+    // on the 4:3 display:
+    //  - block 12x4 source pixels (~19x15 display px), pattern cell 3x1
+    //    source pixels (~4.8x3.8 display px, close to square and coarse
+    //    enough to read as a tile texture).
+    //  - outlines are thinned to exactly 1 pixel with non-maximum
+    //    suppression (Canny-style): a pixel is kept only if its gradient
+    //    magnitude is a local maximum along the gradient direction, so
+    //    the line thickness is uniform.
+    //  - the source is fitted in 4:3 display space first (resizeFitDisplay),
+    //    so a photo uses the full 640 width instead of a 300px strip.
+    // Returns the same shape as tilePaintP6, plus blurMse (2x2).
+    function tilePaint88(base, w, h, pal, edgeThresh){
+      var n = w * h;
+      var np = pal.length;
+      // outline color = darkest palette color by luminance
+      var oi = 0, ol = Infinity;
+      for (var k = 0; k < np; k++){
+        var lum = 0.299 * pal[k][0] + 0.587 * pal[k][1] + 0.114 * pal[k][2];
+        if (lum < ol){ ol = lum; oi = k; }
+      }
+      var outline = pal[oi];
+      // luminance, blurred 3x3, for edge detection
+      var lumA = new Float32Array(n);
+      for (var i = 0; i < n; i++){
+        var i4 = i * 4;
+        lumA[i] = 0.299 * base[i4] + 0.587 * base[i4 + 1] + 0.114 * base[i4 + 2];
+      }
+      var lb = boxBlurChan(lumA, w, h, 3);
+      // gradient magnitude + direction bin, then NMS thinning
+      var mag = new Float32Array(n);
+      var bin = new Uint8Array(n);
+      for (var y = 0; y < h; y++){
+        for (var x = 0; x < w; x++){
+          var xl = x > 0 ? x - 1 : 0, xr = x < w - 1 ? x + 1 : w - 1;
+          var yt = y > 0 ? y - 1 : 0, yb = y < h - 1 ? y + 1 : h - 1;
+          var gx = (lb[y * w + xr] - lb[y * w + xl]) / 2;
+          var gy = (lb[yb * w + x] - lb[yt * w + x]) / 2;
+          var m = Math.hypot(gx, gy);
+          mag[y * w + x] = m;
+          var ang = Math.atan2(gy, gx) * 180 / Math.PI;
+          if (ang < 0) ang += 180;
+          bin[y * w + x] = ang < 22.5 || ang >= 157.5 ? 0 : ang < 67.5 ? 1 : ang < 112.5 ? 2 : 3;
+        }
+      }
+      var edge = new Uint8Array(n);
+      for (var ey = 1; ey < h - 1; ey++){
+        for (var ex = 1; ex < w - 1; ex++){
+          var p = ey * w + ex;
+          if (mag[p] <= edgeThresh) continue;
+          var b = bin[p], n1, n2;
+          if (b === 0){ n1 = mag[p - 1]; n2 = mag[p + 1]; }
+          else if (b === 1){ n1 = mag[p - w - 1]; n2 = mag[p + w + 1]; }
+          else if (b === 2){ n1 = mag[p - w]; n2 = mag[p + w]; }
+          else { n1 = mag[p - w + 1]; n2 = mag[p + w - 1]; }
+          if (mag[p] >= n1 && mag[p] >= n2) edge[p] = 1;
+        }
+      }
+      // smooth base (5x5 blur per channel) for block averages
+      var chR = new Float32Array(n), chG = new Float32Array(n), chB = new Float32Array(n);
+      for (var j = 0; j < n; j++){
+        var j4 = j * 4;
+        chR[j] = base[j4]; chG[j] = base[j4 + 1]; chB[j] = base[j4 + 2];
+      }
+      var sR = boxBlurChan(chR, w, h, 5), sG = boxBlurChan(chG, w, h, 5), sB = boxBlurChan(chB, w, h, 5);
+      var out = new Uint8ClampedArray(n * 4);
+      var idx = new Uint16Array(n);
+      var used = {};
+      var se = 0;
+      var BW = 12, BH = 4, PCW = 3, PCH = 1;
+      for (var by = 0; by < h; by += BH){
+        for (var bx = 0; bx < w; bx += BW){
+          var y0 = by, x0 = bx;
+          var bh = Math.min(BH, h - y0), bw = Math.min(BW, w - x0);
+          // block average over non-edge pixels (fall back to all if fully edge)
+          var ar = 0, ag = 0, ab = 0, cnt = 0, tr = 0, tg = 0, tb = 0, tc = 0;
+          for (var dy = 0; dy < bh; dy++){
+            for (var dx = 0; dx < bw; dx++){
+              var pp = (y0 + dy) * w + (x0 + dx);
+              tr += sR[pp]; tg += sG[pp]; tb += sB[pp]; tc++;
+              if (!edge[pp]){ ar += sR[pp]; ag += sG[pp]; ab += sB[pp]; cnt++; }
+            }
+          }
+          if (cnt === 0){ ar = tr; ag = tg; ab = tb; cnt = tc; }
+          var avgR = ar / cnt, avgG = ag / cnt, avgB = ab / cnt;
+          // best two-color mix (pair i<=j, ratio from TILE_LEVELS)
+          var bi = 0, bj = 0, bt = 0, be = Infinity;
+          for (var a = 0; a < np; a++){
+            for (var b = a; b < np; b++){
+              for (var li = 0; li < TILE_LEVELS.length; li++){
+                var t = TILE_LEVELS[li];
+                var mr = pal[a][0] * (1 - t) + pal[b][0] * t;
+                var mg = pal[a][1] * (1 - t) + pal[b][1] * t;
+                var mb = pal[a][2] * (1 - t) + pal[b][2] * t;
+                var dr = avgR - mr, dg = avgG - mg, db = avgB - mb;
+                var e = dr * dr + dg * dg + db * db;
+                if (e < be){ be = e; bi = a; bj = b; bt = t; }
+              }
+            }
+          }
+          var p0 = pal[bi], p1 = pal[bj];
+          for (var fy = 0; fy < bh; fy++){
+            for (var fx = 0; fx < bw; fx++){
+              var q = (y0 + fy) * w + (x0 + fx), q4 = q * 4;
+              var c;
+              if (edge[q]){ c = outline; idx[q] = oi; }
+              else {
+                var thr = BAYER4[((fy / PCH) | 0) % 4 * 4 + (((fx / PCW) | 0) % 4)] / 16;
+                c = (thr < bt) ? p1 : p0;
+                idx[q] = (thr < bt) ? bj : bi;
+              }
+              used[idx[q]] = 1;
+              out[q4] = c[0]; out[q4 + 1] = c[1]; out[q4 + 2] = c[2]; out[q4 + 3] = 255;
+              var er = c[0] - base[q4], eg = c[1] - base[q4 + 1], eb = c[2] - base[q4 + 2];
+              se += er * er + eg * eg + eb * eb;
+            }
+          }
+        }
+      }
+      return { out: out, idx: idx, usedCount: Object.keys(used).length, used: used,
+               mse: se / (n * 3), totalErr: se, blurMse: blurMse2(out, base, w, h) };
+    }
+
     // Median-cut to <=16 colors, snapped to ST levels (0..7 per channel), deduped.
     function adaptive16(base, w, h){
       var n = w * h;
@@ -1678,14 +1815,7 @@
         enableDownloads('msx', true);
       })();
       // PC-88 V1 (fit in 4:3 display space, then downsample to 640x200)
-      (function(){
-        var w = 640, h = 200, base = resizeFitDisplay(srcBitmap, w, h, 480);
-        var r = nearestDither(base, w, h, DIGITAL8);
-        paintResult('pc88', w, h, r.out); showCanvas('wrap-88', 'cv-88');
-        $('st-88').innerHTML = '使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>';
-        setSwatches('sw-88', DIGITAL8.filter(function(_, i){ return r.used[i]; }));
-        enableDownloads('pc88', true);
-      })();
+      run88();
       // MZ-700 semigraphics (80x50 blocks, cell-exhaustive 64-pair search)
       runMz700();
       runP6();
@@ -1871,6 +2001,28 @@
       });
     });
 
+    function run88(){
+      if (!srcBitmap) return;
+      var w = 640, h = 200, base = resizeFitDisplay(srcBitmap, w, h, 480);
+      var mode = $('pc88mode').value;
+      $('pc88tileCtl').hidden = (mode !== 'tile');
+      if (mode === 'tile'){
+        var edgeThresh = parseInt($('pc88edge').value, 10);
+        var r = tilePaint88(base, w, h, DIGITAL8, edgeThresh);
+        paintResult('pc88', w, h, r.out); showCanvas('wrap-88', 'cv-88');
+        $('st-88').innerHTML = 'タイルペイント　使用色 <b>' + r.usedCount + '</b> / 8色　MSE <span class="mse">' + r.mse.toFixed(1) + '</span>' +
+          '　ブラーMSE <span class="mse">' + r.blurMse.toFixed(1) + '</span>';
+        setSwatches('sw-88', DIGITAL8.filter(function(_, i){ return r.used[i]; }));
+        enableDownloads('pc88', true);
+        return;
+      }
+      var r2 = nearestDither(base, w, h, DIGITAL8);
+      paintResult('pc88', w, h, r2.out); showCanvas('wrap-88', 'cv-88');
+      $('st-88').innerHTML = '使用色 <b>' + r2.usedCount + '</b> / 8色　MSE <span class="mse">' + r2.mse.toFixed(1) + '</span>';
+      setSwatches('sw-88', DIGITAL8.filter(function(_, i){ return r2.used[i]; }));
+      enableDownloads('pc88', true);
+    }
+
     function runP6(){
       if (!srcBitmap) return;
       var w = 320, h = 200, base = resizeFit(srcBitmap, w, h);
@@ -2042,6 +2194,11 @@
     });
     $('p6set').addEventListener('change', runP6);
     $('p6mode').addEventListener('change', runP6);
+    $('pc88mode').addEventListener('change', run88);
+    $('pc88edge').addEventListener('input', function(){
+      $('pc88edgeVal').textContent = $('pc88edge').value;
+      run88();
+    });
     $('p6edge').addEventListener('input', function(){
       $('p6edgeVal').textContent = $('p6edge').value;
       runP6();
