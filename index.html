@@ -317,7 +317,13 @@
         </section>
 
         <section class="card" id="card-p6">
-          <header><h2>PC-6001mkII SCREEN 4</h2><span class="spec">320×200 / 固定4色セット / Bayer 8×8</span></header>
+          <header><h2>PC-6001mkII SCREEN 4</h2><span class="spec">320×200 / 固定4色セット / Bayer 8×8 またはタイルペイント</span></header>
+          <label class="p6ctl">変換モード
+            <select id="p6mode">
+              <option value="bayer" selected>通常（Bayer 8×8 ディザ）</option>
+              <option value="tile">タイルペイント（輪郭＋中間色タイル）</option>
+            </select>
+          </label>
           <label class="p6ctl">パレット
             <select id="p6set">
               <option value="auto" selected>自動（誤差最小）</option>
@@ -329,6 +335,12 @@
               <option value="5">セット6（白・シアン・マゼンタ・橙）</option>
             </select>
           </label>
+          <div class="mzctl" id="p6tileCtl" hidden>
+            <label>輪郭のしきい値 <span id="p6edgeVal">48</span>
+              <input type="range" id="p6edge" min="16" max="96" step="1" value="48">
+            </label>
+            <p class="hint">小さいほど線が増えます。タイルペイントの自動選択は、輪郭に使える暗い色のあるセット（1・3・5・6）の中からブラーMSEが最小のものを選びます。</p>
+          </div>
           <div class="cvwrap empty" id="wrap-p6"><canvas id="cv-p6" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
           <div class="stats" id="st-p6"></div>
           <div class="swatches" id="sw-p6"></div>
@@ -499,6 +511,13 @@
       12,44,4,36,14,46,6,38, 60,28,52,20,62,30,54,22,
       3,35,11,43,1,33,9,41, 51,19,59,27,49,17,57,25,
       15,47,7,39,13,45,5,37, 63,31,55,23,61,29,53,21];
+    // 4x4 Bayer matrix (0..15) for the tile-paint fill: a block's mix ratio
+    // is compared against this threshold, so the same average color always
+    // yields the same 4x4 tile (uniform fills).
+    var BAYER4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+    // Tile-paint mix levels: coarse steps snap similar averages to the same
+    // tile (same idea as the MZ-700 predefined dither levels).
+    var TILE_LEVELS = [0, 0.25, 0.5, 0.75, 1];
     var DIGITAL8 = [[0,0,0],[0,0,255],[255,0,0],[255,0,255],[0,255,0],[0,255,255],[255,255,0],[255,255,255]];
     var PAL15 = {
       '黒':[0,0,0], '青紫':[100,90,240], '橙':[255,128,0], '赤紫':[200,60,170],
@@ -906,6 +925,159 @@
         }
       }
       return { out: out, idx: idx, usedCount: Object.keys(used).length, used: used, mse: se / (n * 3), totalErr: tot };
+    }
+
+    // Separable box blur on one channel (Float32Array, w*h). Edge-clamped.
+    function boxBlurChan(src, w, h, k){
+      var pad = (k - 1) / 2;
+      var tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+      for (var y = 0; y < h; y++){
+        var row = y * w;
+        for (var x = 0; x < w; x++){
+          var s = 0, c = 0;
+          for (var dx = -pad; dx <= pad; dx++){
+            var xx = x + dx; if (xx < 0) xx = 0; if (xx >= w) xx = w - 1;
+            s += src[row + xx]; c++;
+          }
+          tmp[row + x] = s / c;
+        }
+      }
+      for (var yy = 0; yy < h; yy++){
+        for (var xx = 0; xx < w; xx++){
+          var s2 = 0, c2 = 0;
+          for (var dy = -pad; dy <= pad; dy++){
+            var y2 = yy + dy; if (y2 < 0) y2 = 0; if (y2 >= h) y2 = h - 1;
+            s2 += tmp[y2 * w + xx]; c2++;
+          }
+          out[yy * w + xx] = s2 / c2;
+        }
+      }
+      return out;
+    }
+
+    // 2x2 block-average MSE (perceptual approximation): both images are
+    // averaged over 2x2 blocks before comparing, so a dither tile that
+    // matches the local average scores well even though its pixels differ.
+    function blurMse2(a, b, w, h){
+      var bw = w / 2, bh = h / 2, se = 0;
+      for (var by = 0; by < bh; by++){
+        for (var bx = 0; bx < bw; bx++){
+          for (var ch = 0; ch < 3; ch++){
+            var sa = 0, sb = 0;
+            for (var dy = 0; dy < 2; dy++) for (var dx = 0; dx < 2; dx++){
+              var i4 = ((by * 2 + dy) * w + (bx * 2 + dx)) * 4 + ch;
+              sa += a[i4]; sb += b[i4];
+            }
+            var d = (sa - sb) / 4;
+            se += d * d;
+          }
+        }
+      }
+      return se / (bw * bh * 3);
+    }
+
+    // Tile-paint conversion for PC-6001mkII SCREEN 4 (4-color bitmap).
+    // 1) Extract outlines: blur the luminance (3x3), take the gradient
+    //    magnitude (central differences) and threshold it. Blurring first
+    //    keeps only large-scale outlines; fine texture is not an edge.
+    // 2) Fill interiors with intermediate-color tiles: each 4x4 block's
+    //    average color (from a 5x5-blurred base, non-edge pixels only) is
+    //    matched to the best two-palette-color mix (ratio from TILE_LEVELS),
+    //    then the block is filled with a BAYER4 pattern at that ratio.
+    //    The same average color always gives the same tile, so fills are
+    //    uniform instead of speckled.
+    // 3) Draw the outlines: edge pixels are overridden with the darkest
+    //    palette color.
+    // Returns the same shape as nearestDither, plus blurMse (2x2).
+    function tilePaintP6(base, w, h, pal, edgeThresh){
+      var n = w * h;
+      var np = pal.length;
+      // outline color = darkest palette color by luminance
+      var oi = 0, ol = Infinity;
+      for (var k = 0; k < np; k++){
+        var lum = 0.299 * pal[k][0] + 0.587 * pal[k][1] + 0.114 * pal[k][2];
+        if (lum < ol){ ol = lum; oi = k; }
+      }
+      var outline = pal[oi];
+      // luminance, blurred 3x3, for edge detection
+      var lumA = new Float32Array(n);
+      for (var i = 0; i < n; i++){
+        var i4 = i * 4;
+        lumA[i] = 0.299 * base[i4] + 0.587 * base[i4 + 1] + 0.114 * base[i4 + 2];
+      }
+      var lb = boxBlurChan(lumA, w, h, 3);
+      var edge = new Uint8Array(n);
+      for (var y = 0; y < h; y++){
+        for (var x = 0; x < w; x++){
+          var xl = x > 0 ? x - 1 : 0, xr = x < w - 1 ? x + 1 : w - 1;
+          var yt = y > 0 ? y - 1 : 0, yb = y < h - 1 ? y + 1 : h - 1;
+          var gx = Math.abs(lb[y * w + xr] - lb[y * w + xl]);
+          var gy = Math.abs(lb[yb * w + x] - lb[yt * w + x]);
+          edge[y * w + x] = (gx > edgeThresh || gy > edgeThresh) ? 1 : 0;
+        }
+      }
+      // smooth base (5x5 blur per channel) for block averages
+      var chR = new Float32Array(n), chG = new Float32Array(n), chB = new Float32Array(n);
+      for (var j = 0; j < n; j++){
+        var j4 = j * 4;
+        chR[j] = base[j4]; chG[j] = base[j4 + 1]; chB[j] = base[j4 + 2];
+      }
+      var sR = boxBlurChan(chR, w, h, 5), sG = boxBlurChan(chG, w, h, 5), sB = boxBlurChan(chB, w, h, 5);
+      var out = new Uint8ClampedArray(n * 4);
+      var idx = new Uint16Array(n);
+      var used = {};
+      var se = 0;
+      var block = 4;
+      for (var by = 0; by < h / block; by++){
+        for (var bx = 0; bx < w / block; bx++){
+          var y0 = by * block, x0 = bx * block;
+          // block average over non-edge pixels (fall back to all if fully edge)
+          var ar = 0, ag = 0, ab = 0, cnt = 0, tr = 0, tg = 0, tb = 0, tc = 0;
+          for (var dy = 0; dy < block; dy++){
+            for (var dx = 0; dx < block; dx++){
+              var p = (y0 + dy) * w + (x0 + dx);
+              tr += sR[p]; tg += sG[p]; tb += sB[p]; tc++;
+              if (!edge[p]){ ar += sR[p]; ag += sG[p]; ab += sB[p]; cnt++; }
+            }
+          }
+          if (cnt === 0){ ar = tr; ag = tg; ab = tb; cnt = tc; }
+          var avgR = ar / cnt, avgG = ag / cnt, avgB = ab / cnt;
+          // best two-color mix (pair i<=j, ratio from TILE_LEVELS)
+          var bi = 0, bj = 0, bt = 0, be = Infinity;
+          for (var a = 0; a < np; a++){
+            for (var b = a; b < np; b++){
+              for (var li = 0; li < TILE_LEVELS.length; li++){
+                var t = TILE_LEVELS[li];
+                var mr = pal[a][0] * (1 - t) + pal[b][0] * t;
+                var mg = pal[a][1] * (1 - t) + pal[b][1] * t;
+                var mb = pal[a][2] * (1 - t) + pal[b][2] * t;
+                var dr = avgR - mr, dg = avgG - mg, db = avgB - mb;
+                var e = dr * dr + dg * dg + db * db;
+                if (e < be){ be = e; bi = a; bj = b; bt = t; }
+              }
+            }
+          }
+          var p0 = pal[bi], p1 = pal[bj];
+          for (var fy = 0; fy < block; fy++){
+            for (var fx = 0; fx < block; fx++){
+              var q = (y0 + fy) * w + (x0 + fx), q4 = q * 4;
+              var c;
+              if (edge[q]){ c = outline; idx[q] = oi; }
+              else {
+                var thr = BAYER4[(fy & 3) * 4 + (fx & 3)] / 16;
+                c = (thr < bt) ? p1 : p0;
+                idx[q] = (thr < bt) ? bj : bi;
+              }
+              used[idx[q]] = 1;
+              out[q4] = c[0]; out[q4 + 1] = c[1]; out[q4 + 2] = c[2]; out[q4 + 3] = 255;
+              var er = c[0] - base[q4], eg = c[1] - base[q4 + 1], eb = c[2] - base[q4 + 2];
+              se += er * er + eg * eg + eb * eb;
+            }
+          }
+        }
+      }
+      return { out: out, idx: idx, usedCount: Object.keys(used).length, used: used,
+               mse: se / (n * 3), totalErr: se, blurMse: blurMse2(out, base, w, h) };
     }
 
     // Median-cut to <=16 colors, snapped to ST levels (0..7 per channel), deduped.
@@ -1703,20 +1875,58 @@
       if (!srcBitmap) return;
       var w = 320, h = 200, base = resizeFit(srcBitmap, w, h);
       var sel = $('p6set').value;
+      var mode = $('p6mode').value;
+      $('p6tileCtl').hidden = (mode !== 'tile');
+      if (mode === 'tile'){
+        var edgeThresh = parseInt($('p6edge').value, 10);
+        var cands = [];
+        for (var i = 0; i < P6SETS.length; i++){
+          var pal = P6SETS[i].map(function(nm){ return PAL15[nm]; });
+          // darkest palette color must be dark enough to read as an outline
+          var dl = Infinity;
+          pal.forEach(function(c){
+            var l = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+            if (l < dl) dl = l;
+          });
+          cands.push({ set: P6SETS[i], pal: pal, dark: dl < 80, r: null });
+        }
+        var pick = 0;
+        if (sel === 'auto'){
+          // auto: among sets with a dark outline color, pick the lowest
+          // 2x2-blurred MSE of the tile-paint output
+          var bt = Infinity;
+          cands.forEach(function(x, i){
+            if (!x.dark) return;
+            x.r = tilePaintP6(base, w, h, x.pal, edgeThresh);
+            if (x.r.blurMse < bt){ bt = x.r.blurMse; pick = i; }
+          });
+        } else {
+          pick = parseInt(sel, 10);
+          cands[pick].r = tilePaintP6(base, w, h, cands[pick].pal, edgeThresh);
+        }
+        var x = cands[pick];
+        paintResult('p6', w, h, x.r.out); showCanvas('wrap-p6', 'cv-p6');
+        $('st-p6').innerHTML = 'タイルペイント　セット' + (pick + 1) + '（' + x.set.join('・') + '）' + (sel === 'auto' ? ' 自動選択' : '') +
+          '　MSE <span class="mse">' + x.r.mse.toFixed(1) + '</span>' +
+          '　ブラーMSE <span class="mse">' + x.r.blurMse.toFixed(1) + '</span>';
+        setSwatches('sw-p6', x.pal, x.set);
+        enableDownloads('p6', true);
+        return;
+      }
       var results = P6SETS.map(function(set){
         var pal = set.map(function(nm){ return PAL15[nm]; });
         return { set: set, pal: pal, r: nearestDither(base, w, h, pal) };
       });
-      var pick = 0;
+      var pick2 = 0;
       if (sel === 'auto'){
-        var bt = Infinity;
-        results.forEach(function(x, i){ if (x.r.totalErr < bt){ bt = x.r.totalErr; pick = i; } });
-      } else pick = parseInt(sel, 10);
-      var x = results[pick];
-      paintResult('p6', w, h, x.r.out); showCanvas('wrap-p6', 'cv-p6');
-      $('st-p6').innerHTML = 'セット' + (pick + 1) + '（' + x.set.join('・') + '）' + (sel === 'auto' ? ' 自動選択' : '') +
-        '　MSE <span class="mse">' + x.r.mse.toFixed(1) + '</span>';
-      setSwatches('sw-p6', x.pal, x.set);
+        var bt2 = Infinity;
+        results.forEach(function(x, i){ if (x.r.totalErr < bt2){ bt2 = x.r.totalErr; pick2 = i; } });
+      } else pick2 = parseInt(sel, 10);
+      var y = results[pick2];
+      paintResult('p6', w, h, y.r.out); showCanvas('wrap-p6', 'cv-p6');
+      $('st-p6').innerHTML = 'セット' + (pick2 + 1) + '（' + y.set.join('・') + '）' + (sel === 'auto' ? ' 自動選択' : '') +
+        '　MSE <span class="mse">' + y.r.mse.toFixed(1) + '</span>';
+      setSwatches('sw-p6', y.pal, y.set);
       enableDownloads('p6', true);
     }
 
@@ -1831,6 +2041,11 @@
       $(pair[0]).addEventListener('click', function(){ loadSample('assets/sample-' + pair[1] + '.jpg', 'sample-' + pair[1] + '.jpg'); });
     });
     $('p6set').addEventListener('change', runP6);
+    $('p6mode').addEventListener('change', runP6);
+    $('p6edge').addEventListener('input', function(){
+      $('p6edgeVal').textContent = $('p6edge').value;
+      runP6();
+    });
 
     /* ============ save sheet ============
        The sheet is the primary save path on mobile (confirmed working
