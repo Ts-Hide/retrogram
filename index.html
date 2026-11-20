@@ -339,9 +339,6 @@
             <label>輪郭のしきい値 <span id="p6edgeVal">48</span>
               <input type="range" id="p6edge" min="16" max="96" step="1" value="48">
             </label>
-            <label>線の太さ <span id="p6edgeWidthVal">1</span>px
-              <input type="range" id="p6edgeWidth" min="1" max="5" step="1" value="1">
-            </label>
             <p class="hint">小さいほど線が増えます。タイルペイントの自動選択は、輪郭に使える暗い色のあるセット（1・3・5・6）の中からブラーMSEが最小のものを選びます。</p>
           </div>
           <div class="cvwrap empty" id="wrap-p6"><canvas id="cv-p6" width="320" height="200" hidden></canvas><span>ここに変換後の画像が表示されます</span></div>
@@ -992,7 +989,7 @@
     // 3) Draw the outlines: edge pixels are overridden with the darkest
     //    palette color.
     // Returns the same shape as nearestDither, plus blurMse (2x2).
-    function tilePaintP6(base, w, h, pal, edgeThresh, edgeWidth){
+    function tilePaintP6(base, w, h, pal, edgeThresh){
       var n = w * h;
       var np = pal.length;
       // outline color = darkest palette color by luminance
@@ -1018,31 +1015,6 @@
           var gy = Math.abs(lb[yb * w + x] - lb[yt * w + x]);
           edge[y * w + x] = (gx > edgeThresh || gy > edgeThresh) ? 1 : 0;
         }
-      }
-      // thicken the outline: stamp a edgeWidth x edgeWidth brush on every
-      // edge pixel (1 = 1px, the previous behaviour). The dilated mask is
-      // used both for the block-average exclusion and for drawing, so the
-      // fill colors stay clean under a thick line.
-      edgeWidth = edgeWidth || 1;
-      if (edgeWidth > 1){
-        var dil = new Uint8Array(n);
-        var rad = Math.floor((edgeWidth - 1) / 2);
-        for (var ey = 0; ey < h; ey++){
-          for (var ex = 0; ex < w; ex++){
-            if (!edge[ey * w + ex]) continue;
-            var x0 = ex - rad, y0 = ey - rad;
-            for (var ddy = 0; ddy < edgeWidth; ddy++){
-              var yy = y0 + ddy;
-              if (yy < 0 || yy >= h) continue;
-              for (var ddx = 0; ddx < edgeWidth; ddx++){
-                var xx = x0 + ddx;
-                if (xx < 0 || xx >= w) continue;
-                dil[yy * w + xx] = 1;
-              }
-            }
-          }
-        }
-        edge = dil;
       }
       // smooth base (5x5 blur per channel) for block averages
       var chR = new Float32Array(n), chG = new Float32Array(n), chB = new Float32Array(n);
@@ -1907,7 +1879,6 @@
       $('p6tileCtl').hidden = (mode !== 'tile');
       if (mode === 'tile'){
         var edgeThresh = parseInt($('p6edge').value, 10);
-        var edgeWidth = parseInt($('p6edgeWidth').value, 10) || 1;
         var cands = [];
         for (var i = 0; i < P6SETS.length; i++){
           var pal = P6SETS[i].map(function(nm){ return PAL15[nm]; });
@@ -1926,12 +1897,12 @@
           var bt = Infinity;
           cands.forEach(function(x, i){
             if (!x.dark) return;
-            x.r = tilePaintP6(base, w, h, x.pal, edgeThresh, edgeWidth);
+            x.r = tilePaintP6(base, w, h, x.pal, edgeThresh);
             if (x.r.blurMse < bt){ bt = x.r.blurMse; pick = i; }
           });
         } else {
           pick = parseInt(sel, 10);
-          cands[pick].r = tilePaintP6(base, w, h, cands[pick].pal, edgeThresh, edgeWidth);
+          cands[pick].r = tilePaintP6(base, w, h, cands[pick].pal, edgeThresh);
         }
         var x = cands[pick];
         paintResult('p6', w, h, x.r.out); showCanvas('wrap-p6', 'cv-p6');
@@ -2073,10 +2044,6 @@
     $('p6mode').addEventListener('change', runP6);
     $('p6edge').addEventListener('input', function(){
       $('p6edgeVal').textContent = $('p6edge').value;
-      runP6();
-    });
-    $('p6edgeWidth').addEventListener('input', function(){
-      $('p6edgeWidthVal').textContent = $('p6edgeWidth').value;
       runP6();
     });
 
