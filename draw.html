@@ -164,6 +164,31 @@
         </div>
       </section>
 
+      <section class="card">
+        <h2>2b. 塗り（タイルペイント）</h2>
+        <div class="grid">
+          <div>
+            <label><input type="checkbox" id="fill-on" checked style="width:auto" /> 塗りを含める（先に塗り、最後に線を描く）</label>
+          </div>
+          <div>
+            <label>パレットセット</label>
+            <select id="fill-set">
+              <option value="0">セット1：黒・青紫・橙・赤紫</option>
+              <option value="1">セット2：青緑・空色・黄緑・灰色</option>
+              <option value="2">セット3：黒・青・赤・マゼンタ</option>
+              <option value="3">セット4：緑・シアン・黄・白</option>
+              <option value="4">セット5：緑・黄・青・赤</option>
+              <option value="5">セット6：白・シアン・マゼンタ・橙</option>
+            </select>
+          </div>
+          <div>
+            <label>小さい領域を省く <b id="v-minreg">4</b> <span>ブロック（1–20）このブロック数未満の領域は塗らない</span></label>
+            <input type="range" id="fill-minreg" min="1" max="20" step="1" value="4" />
+          </div>
+        </div>
+        <p class="hint">塗りは4×4ブロックのタイル（2色＋Bayerディザ）で画像を再現し、同じタイルの領域をまとめて矩形に分解します。各矩形はディザ塗りサブルーチン（*DFILL）の呼び出し1文です。大きい領域から順に塗るペインター方式です。</p>
+      </section>
+
       <section class="card" id="out-card" hidden>
         <h2>3. 結果</h2>
         <div class="compare">
@@ -174,6 +199,16 @@
           <figure>
             <figcaption>コマンドでの描画（右）</figcaption>
             <canvas id="cv-cmd" width="640" height="400"></canvas>
+          </figure>
+        </div>
+        <div class="compare" id="fill-compare" style="margin-top:12px">
+          <figure>
+            <figcaption>塗り（タイルペイント）</figcaption>
+            <canvas id="cv-fill" width="640" height="400"></canvas>
+          </figure>
+          <figure>
+            <figcaption>塗り＋線（最終）</figcaption>
+            <canvas id="cv-final" width="640" height="400"></canvas>
           </figure>
         </div>
         <p class="stats" id="stats" style="margin-top:12px"></p>
@@ -665,6 +700,194 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
       }
+      function drawRgbToCanvas(canvas, rgb) {
+        // rgb: Uint8ClampedArray of W*H*4. Render scaled 2x.
+        const off = document.createElement('canvas');
+        off.width = W; off.height = H;
+        const octx = off.getContext('2d');
+        const img = octx.createImageData(W, H);
+        img.data.set(rgb);
+        octx.putImageData(img, 0, 0);
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+      }
+
+      // ---------- tile paint (fill) ----------
+      const P6SETS = [
+        [[0,0,0],[100,90,240],[255,128,0],[200,60,170]],
+        [[0,190,170],[110,180,255],[150,210,30],[165,165,165]],
+        [[0,0,0],[0,0,255],[255,0,0],[255,0,255]],
+        [[0,255,0],[0,255,255],[255,255,0],[255,255,255]],
+        [[0,255,0],[255,255,0],[0,0,255],[255,0,0]],
+        [[255,255,255],[0,255,255],[255,0,255],[255,128,0]],
+      ];
+      const P6SET_NAMES = ['黒・青紫・橙・赤紫','青緑・空色・黄緑・灰色','黒・青・赤・マゼンタ','緑・シアン・黄・白','緑・黄・青・赤','白・シアン・マゼンタ・橙'];
+      const BAYER4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+      const TILE_LEVELS = [0, 0.25, 0.5, 0.75, 1];
+      function boxBlurChan(src, w, h, k) {
+        const pad = (k-1)/2;
+        const tmp = new Float32Array(w*h), out = new Float32Array(w*h);
+        for (let y = 0; y < h; y++) {
+          const row = y*w;
+          for (let x = 0; x < w; x++) {
+            let s = 0, c = 0;
+            for (let dx = -pad; dx <= pad; dx++) {
+              let xx = x+dx; if (xx < 0) xx = 0; if (xx >= w) xx = w-1;
+              s += src[row+xx]; c++;
+            }
+            tmp[row+x] = s/c;
+          }
+        }
+        for (let yy = 0; yy < h; yy++) {
+          for (let xx = 0; xx < w; xx++) {
+            let s2 = 0, c2 = 0;
+            for (let dy = -pad; dy <= pad; dy++) {
+              let y2 = yy+dy; if (y2 < 0) y2 = 0; if (y2 >= h) y2 = h-1;
+              s2 += tmp[y2*w+xx]; c2++;
+            }
+            out[yy*w+xx] = s2/c2;
+          }
+        }
+        return out;
+      }
+      // Tile-paint the 320x200 RGBA image with a 4-color palette.
+      // Returns { blocks: 80x50 array of {p0,p1,t}, img: Uint8ClampedArray(W*H*4), outlineIdx }.
+      // Edge pixels are painted with the darkest palette color (the outline).
+      // qstep: quantize the block average color to this step before choosing
+      // the tile pattern, so similar averages snap to the same tile and the
+      // region count (hence the command count) stays low.
+      function tilePaint(rgba, pal, edge, qstep) {
+        const n = W*H, np = pal.length;
+        let oi = 0, ol = Infinity;
+        for (let k = 0; k < np; k++) {
+          const lum = 0.299*pal[k][0] + 0.587*pal[k][1] + 0.114*pal[k][2];
+          if (lum < ol) { ol = lum; oi = k; }
+        }
+        const outline = pal[oi];
+        const chR = new Float32Array(n), chG = new Float32Array(n), chB = new Float32Array(n);
+        for (let j = 0; j < n; j++) { const j4 = j*4; chR[j] = rgba[j4]; chG[j] = rgba[j4+1]; chB[j] = rgba[j4+2]; }
+        const sR = boxBlurChan(chR, W, H, 5), sG = boxBlurChan(chG, W, H, 5), sB = boxBlurChan(chB, W, H, 5);
+        const out = new Uint8ClampedArray(n*4);
+        const BW = W/4, BH = H/4;
+        const blocks = [];
+        const q = qstep || 32;
+        for (let by = 0; by < BH; by++) {
+          blocks.push([]);
+          for (let bx = 0; bx < BW; bx++) {
+            const y0 = by*4, x0 = bx*4;
+            let ar = 0, ag = 0, ab = 0, cnt = 0, tr = 0, tg = 0, tb = 0, tc = 0;
+            for (let dy = 0; dy < 4; dy++) {
+              for (let dx = 0; dx < 4; dx++) {
+                const p = (y0+dy)*W + (x0+dx);
+                tr += sR[p]; tg += sG[p]; tb += sB[p]; tc++;
+                if (!edge[p]) { ar += sR[p]; ag += sG[p]; ab += sB[p]; cnt++; }
+              }
+            }
+            if (cnt === 0) { ar = tr; ag = tg; ab = tb; cnt = tc; }
+            const avgR = Math.round((ar/cnt) / q) * q, avgG = Math.round((ag/cnt) / q) * q, avgB = Math.round((ab/cnt) / q) * q;
+            let bi = 0, bj = 0, bt = 0, be = Infinity;
+            for (let a = 0; a < np; a++) {
+              for (let b = a; b < np; b++) {
+                for (let li = 0; li < TILE_LEVELS.length; li++) {
+                  const t = TILE_LEVELS[li];
+                  const mr = pal[a][0]*(1-t) + pal[b][0]*t;
+                  const mg = pal[a][1]*(1-t) + pal[b][1]*t;
+                  const mb = pal[a][2]*(1-t) + pal[b][2]*t;
+                  const dr = avgR-mr, dg = avgG-mg, db = avgB-mb;
+                  const e = dr*dr + dg*dg + db*db;
+                  if (e < be) { be = e; bi = a; bj = b; bt = t; }
+                }
+              }
+            }
+            blocks[by].push({ p0: bi, p1: bj, t: bt });
+            const p0 = pal[bi], p1 = pal[bj];
+            for (let fy = 0; fy < 4; fy++) {
+              for (let fx = 0; fx < 4; fx++) {
+                const q = (y0+fy)*W + (x0+fx), q4 = q*4;
+                let c;
+                if (edge[q]) c = outline;
+                else {
+                  const thr = BAYER4[(fy&3)*4 + (fx&3)] / 16;
+                  c = (thr < bt) ? p1 : p0;
+                }
+                out[q4] = c[0]; out[q4+1] = c[1]; out[q4+2] = c[2]; out[q4+3] = 255;
+              }
+            }
+          }
+        }
+        return { blocks, img: out, outlineIdx: oi };
+      }
+      // Segment the 80x50 block grid into connected regions by (p0,p1,t).
+      function segmentRegions(blocks) {
+        const BH = blocks.length, BW = blocks[0].length;
+        const lab = Array.from({length: BH}, () => new Int32Array(BW).fill(-1));
+        const regions = [];
+        const key = (b) => b.p0*100 + b.p1*10 + Math.round(b.t*4);
+        let nid = 0;
+        for (let y = 0; y < BH; y++) {
+          for (let x = 0; x < BW; x++) {
+            if (lab[y][x] >= 0) continue;
+            const k = key(blocks[y][x]);
+            const cells = [];
+            const stack = [[x, y]];
+            lab[y][x] = nid;
+            while (stack.length) {
+              const [cx, cy] = stack.pop();
+              cells.push([cx, cy]);
+              for (const [nx, ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]) {
+                if (nx < 0 || nx >= BW || ny < 0 || ny >= BH || lab[ny][nx] >= 0) continue;
+                if (key(blocks[ny][nx]) !== k) continue;
+                lab[ny][nx] = nid;
+                stack.push([nx, ny]);
+              }
+            }
+            regions.push({ id: nid, cells, p0: blocks[y][x].p0, p1: blocks[y][x].p1, t: blocks[y][x].t });
+            nid++;
+          }
+        }
+        regions.sort((a, b) => b.cells.length - a.cells.length);
+        return regions;
+      }
+      // Greedy rectangle decomposition of a region's block cells.
+      function greedyRects(cells) {
+        const s = new Set(cells.map(([x, y]) => y*1000 + x));
+        const rects = [];
+        while (s.size > 0) {
+          const arr = [...s].sort((a, b) => a - b);
+          const start = arr[0];
+          const sx = start % 1000, sy = Math.floor(start / 1000);
+          let w = 1;
+          while (s.has(sy*1000 + sx + w)) w++;
+          let h = 1, ok = true;
+          while (ok) {
+            for (let dx = 0; dx < w; dx++) if (!s.has((sy+h)*1000 + sx+dx)) { ok = false; break; }
+            if (ok) h++;
+          }
+          for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) s.delete((sy+dy)*1000 + sx+dx);
+          rects.push([sx, sy, w, h]);
+        }
+        return rects;
+      }
+      // Build the fill .bas lines (one GOSUB per rectangle) and the subroutine.
+      // Rectangles are in block units; convert to pixels (x*4 .. x*4+w*4-1).
+      function fillSubroutine() {
+        return [
+          `' --- dither fill subroutine (*DFILL) ---`,
+          `' Call with X1,Y1,X2,Y2 (inclusive), C1,C2 (palette 0-3), T (0/4/8/12/16 = count of C1 pixels)`,
+          `' Pixels with Bayer value < T are C1, the rest are C2.`,
+          `DIM B(3,3)`,
+          `DATA 0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5`,
+          `FOR I=0 TO 3:FOR J=0 TO 3:READ B(I,J):NEXT J:NEXT I`,
+          `*DFILL:FOR Y=Y1 TO Y2:FOR X=X1 TO X2:IF B(Y AND 3,X AND 3)<T THEN PSET(X,Y),C1 ELSE PSET(X,Y),C2:NEXT X:NEXT Y:RETURN`,
+        ].join('\n');
+      }
+      function fillCall(bx, by, bw, bh, c1, c2, t) {
+        const x1 = bx*4, y1 = by*4, x2 = bx*4 + bw*4 - 1, y2 = by*4 + bh*4 - 1;
+        const T = Math.round(t*16);
+        return `X1=${x1},Y1=${y1},X2=${x2},Y2=${y2},C1=${c1},C2=${c2},T=${T}:GOSUB *DFILL`;
+      }
 
       // ---------- main pipeline ----------
       function cmdMask(c) {
@@ -770,16 +993,84 @@
             const prec = (100*inter/Math.max(1,rendSum)).toFixed(1);
             drawMaskToCanvas($('cv-edge'), edge);
             drawMaskToCanvas($('cv-cmd'), rend);
-            const header = `' RetroDraw: outline -> drawing commands (${basic} BASIC)\n' CIRCLE angles in radians; aspect = ry/rx (ellipse)\n`;
-            lastBas = header + cmds.map(fmtCmd).join('\n') + '\n';
+            // ----- fill (tile paint) -----
+            const fillOn = $('fill-on').checked;
+            const setIdx = +$('fill-set').value;
+            const minReg = +$('fill-minreg').value;
+            const pal = P6SETS[setIdx];
+            let fillLines = [], nFillRects = 0, nRegions = 0, nRegionsKept = 0, nRegionsSkipped = 0, fillImg = null, outlineIdx = 0;
+            if (fillOn) {
+              const tp = tilePaint(rgba, pal, edge, 32);
+              fillImg = tp.img; outlineIdx = tp.outlineIdx;
+              const regions = segmentRegions(tp.blocks);
+              nRegions = regions.length;
+              for (const r of regions) {
+                if (r.cells.length < minReg) { nRegionsSkipped++; continue; }
+                nRegionsKept++;
+                const rects = greedyRects(r.cells);
+                for (const [bx, by, bw, bh] of rects) {
+                  fillLines.push(fillCall(bx, by, bw, bh, r.p1, r.p0, r.t));
+                  nFillRects++;
+                }
+              }
+              drawRgbToCanvas($('cv-fill'), fillImg);
+              // final: fill + outline (in the outline color)
+              const oc = pal[outlineIdx];
+              const finalCv = $('cv-final');
+              const fctx = finalCv.getContext('2d');
+              fctx.imageSmoothingEnabled = false;
+              const off = document.createElement('canvas');
+              off.width = W; off.height = H;
+              const octx = off.getContext('2d');
+              const fimg = octx.createImageData(W, H);
+              fimg.data.set(fillImg);
+              octx.putImageData(fimg, 0, 0);
+              octx.strokeStyle = `rgb(${oc[0]},${oc[1]},${oc[2]})`;
+              octx.fillStyle = `rgb(${oc[0]},${oc[1]},${oc[2]})`;
+              octx.lineWidth = 1;
+              for (const c of cmds) {
+                if (c[0] === 'LINE') {
+                  octx.beginPath(); octx.moveTo(c[1]+0.5, c[2]+0.5); octx.lineTo(c[3]+0.5, c[4]+0.5); octx.stroke();
+                } else if (c[0] === 'CIRCLE') {
+                  const [, cx, cy, r, a1, a2, aspect] = c;
+                  const ry = r * aspect;
+                  octx.beginPath();
+                  if (a1 === null) { octx.ellipse(cx, cy, r, ry, 0, 0, Math.PI*2); octx.stroke(); }
+                  else {
+                    let s = a1 * Math.PI/180, e = a2 * Math.PI/180;
+                    if (e <= s) e += Math.PI*2;
+                    octx.ellipse(cx, cy, r, ry, 0, s, e); octx.stroke();
+                  }
+                } else if (c[0] === 'PSET') {
+                  octx.fillRect(Math.round(c[1]), Math.round(c[2]), 1, 1);
+                }
+              }
+              fctx.clearRect(0, 0, finalCv.width, finalCv.height);
+              fctx.drawImage(off, 0, 0, finalCv.width, finalCv.height);
+              $('fill-compare').hidden = false;
+            } else {
+              $('fill-compare').hidden = true;
+            }
+            const header = `' RetroDraw: ${fillOn ? 'fill + outline' : 'outline'} -> drawing commands (${basic} BASIC)\n' Palette set ${setIdx+1}: ${P6SET_NAMES[setIdx]} (colors 0-3 in this order; set the palette before running)\n' CIRCLE angles in radians; aspect = ry/rx (ellipse)\n' Drawing order: fill first, then outline on top.\n`;
+            let body = '';
+            if (fillOn) {
+              body += fillSubroutine() + '\n';
+              body += `' --- fill (${nFillRects} rectangles from ${nRegionsKept} regions; ${nRegionsSkipped} small regions skipped) ---\n`;
+              body += fillLines.join('\n') + '\n';
+              body += `' --- outline ---\n`;
+            }
+            body += cmds.map(fmtCmd).join('\n') + '\n';
+            lastBas = header + body;
             $('bas').textContent = lastBas;
+            const totalCmds = cmds.length + nFillRects;
             $('stats').textContent =
-              `総コマンド数: ${cmds.length}文（PSETだけなら ${nEdge}文の ${(100*cmds.length/Math.max(1,nEdge)).toFixed(1)}%）\n` +
+              `総コマンド数: ${totalCmds}文（線 ${cmds.length}文＋塗り ${nFillRects}文）\n` +
               `LINE: ${nLine}  CIRCLE(真円): ${nFull}  ARC: ${nArc}  ELLIPSE: ${nEll}  ELL-ARC: ${nEllArc}  PSET: ${nPset}\n` +
               `再現率: ${cov}%  精度: ${prec}%  （thresh=${thresh}, tol=${tol}, min_path=${minPath}, min_loop=${minLoop}, gap_max=${gapMax}）\n` +
-              `パス: ${nPathsRaw}本 → 橋渡し ${nMerges}回 → 平行重複を ${nDedupPath}本除去 → ${kept.length}本採用（${nDropped}本破棄）→ コマンド重複を ${nDroppedDup}文除去`;
+              `パス: ${nPathsRaw}本 → 橋渡し ${nMerges}回 → 平行重複を ${nDedupPath}本除去 → ${kept.length}本採用（${nDropped}本破棄）→ コマンド重複を ${nDroppedDup}文除去` +
+              (fillOn ? `\n塗り: 領域 ${nRegions}個（${nRegionsKept}個採用、${nRegionsSkipped}個を省略）→ 矩形 ${nFillRects}個（大きい領域から順に塗る）` : '');
             $('out-card').hidden = false;
-            $('status').textContent = `完了：${cmds.length}文`;
+            $('status').textContent = `完了：${totalCmds}文`;
           } catch (err) {
             $('status').textContent = 'エラー：' + err.message;
           }
@@ -838,6 +1129,10 @@
         $(pid).addEventListener('change', () => { if (srcImage) runPipeline(); });
       }
       $('p-basic').addEventListener('change', () => { if (srcImage) runPipeline(); });
+      $('fill-on').addEventListener('change', () => { if (srcImage) runPipeline(); });
+      $('fill-set').addEventListener('change', () => { if (srcImage) runPipeline(); });
+      $('fill-minreg').addEventListener('input', () => { $('v-minreg').textContent = $('fill-minreg').value; });
+      $('fill-minreg').addEventListener('change', () => { if (srcImage) runPipeline(); });
       $('run').addEventListener('click', runPipeline);
       $('dl').addEventListener('click', () => {
         if (!lastBas) return;
