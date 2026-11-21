@@ -171,22 +171,15 @@
             <label><input type="checkbox" id="fill-on" checked style="width:auto" /> 塗りを含める（先に塗り、最後に線を描く）</label>
           </div>
           <div>
-            <label>パレットセット</label>
-            <select id="fill-set">
-              <option value="0">セット1：黒・青紫・橙・赤紫</option>
-              <option value="1">セット2：青緑・空色・黄緑・灰色</option>
-              <option value="2">セット3：黒・青・赤・マゼンタ</option>
-              <option value="3">セット4：緑・シアン・黄・白</option>
-              <option value="4">セット5：緑・黄・青・赤</option>
-              <option value="5">セット6：白・シアン・マゼンタ・橙</option>
-            </select>
+            <label>パレットセット <span id="fill-set-machine">（PC-6001 SCREEN 4）</span></label>
+            <select id="fill-set"></select>
           </div>
           <div>
             <label>小さい領域を省く <b id="v-minreg">4</b> <span>ブロック（1–20）このブロック数未満の領域は塗らない</span></label>
             <input type="range" id="fill-minreg" min="1" max="20" step="1" value="4" />
           </div>
         </div>
-        <p class="hint">塗りは4×4ブロックのタイル（2色＋Bayerディザ）で画像を再現し、同じタイルの領域をまとめて矩形に分解します。各矩形はディザ塗りサブルーチン（*DFILL）の呼び出し1文です。大きい領域から順に塗るペインター方式です。</p>
+        <p class="hint">塗りは4×4ブロックのタイル（2色＋Bayerディザ）で画像を再現し、同じタイルの領域をまとめて矩形に分解します。各矩形はディザ塗りサブルーチン（*DFILL）の呼び出し1文です。大きい領域から順に塗るペインター方式です。パレットは対象BASICの機種に合わせた4色セットです（線のLINE/CIRCLE/PSET文法は3機種で共通）。</p>
       </section>
 
       <section class="card" id="out-card" hidden>
@@ -715,15 +708,53 @@
       }
 
       // ---------- tile paint (fill) ----------
-      const P6SETS = [
-        [[0,0,0],[100,90,240],[255,128,0],[200,60,170]],
-        [[0,190,170],[110,180,255],[150,210,30],[165,165,165]],
-        [[0,0,0],[0,0,255],[255,0,0],[255,0,255]],
-        [[0,255,0],[0,255,255],[255,255,0],[255,255,255]],
-        [[0,255,0],[255,255,0],[0,0,255],[255,0,0]],
-        [[255,255,255],[0,255,255],[255,0,255],[255,128,0]],
-      ];
-      const P6SET_NAMES = ['黒・青紫・橙・赤紫','青緑・空色・黄緑・灰色','黒・青・赤・マゼンタ','緑・シアン・黄・白','緑・黄・青・赤','白・シアン・マゼンタ・橙'];
+      // 4-color palette sets per target machine. The fill (*DFILL) uses
+      // palette indices 0-3, so the same subroutine works for any set;
+      // only the RGB values (hence which tile each block picks) change.
+      const PALETTES = {
+        N60: {
+          label: 'PC-6001 SCREEN 4',
+          sets: [
+            { name: '黒・青紫・橙・赤紫', colors: [[0,0,0],[100,90,240],[255,128,0],[200,60,170]] },
+            { name: '青緑・空色・黄緑・灰色', colors: [[0,190,170],[110,180,255],[150,210,30],[165,165,165]] },
+            { name: '黒・青・赤・マゼンタ', colors: [[0,0,0],[0,0,255],[255,0,0],[255,0,255]] },
+            { name: '緑・シアン・黄・白', colors: [[0,255,0],[0,255,255],[255,255,0],[255,255,255]] },
+            { name: '緑・黄・青・赤', colors: [[0,255,0],[255,255,0],[0,0,255],[255,0,0]] },
+            { name: '白・シアン・マゼンタ・橙', colors: [[255,255,255],[0,255,255],[255,0,255],[255,128,0]] },
+          ],
+        },
+        MSX: {
+          label: 'MSX SCREEN 2（15色）',
+          sets: [
+            { name: '黒・緑・青・白', colors: [[0,0,0],[33,200,66],[68,68,255],[255,255,255]] },
+            { name: '黒・暗赤・赤・淡黄', colors: [[0,0,0],[173,32,32],[255,80,80],[221,221,127]] },
+            { name: '青・淡青・シアン・白', colors: [[68,68,255],[87,153,255],[33,200,200],[255,255,255]] },
+            { name: '黒・マゼンタ・灰・白', colors: [[0,0,0],[203,79,204],[204,204,204],[255,255,255]] },
+          ],
+        },
+        N88: {
+          label: 'PC-8801 V1（デジタル8色）',
+          sets: [
+            { name: '黒・青・赤・白', colors: [[0,0,0],[0,0,255],[255,0,0],[255,255,255]] },
+            { name: '黒・緑・シアン・黄', colors: [[0,0,0],[0,255,0],[0,255,255],[255,255,0]] },
+            { name: '青・マゼンタ・シアン・白', colors: [[0,0,255],[255,0,255],[0,255,255],[255,255,255]] },
+            { name: '黒・赤・マゼンタ・白', colors: [[0,0,0],[255,0,0],[255,0,255],[255,255,255]] },
+          ],
+        },
+      };
+      function populateFillSets(target) {
+        const sel = $('fill-set');
+        sel.innerHTML = '';
+        PALETTES[target].sets.forEach((s, i) => {
+          const o = document.createElement('option');
+          o.value = String(i);
+          o.textContent = `セット${i+1}：${s.name}`;
+          sel.appendChild(o);
+        });
+        sel.value = '0';
+        $('fill-set-machine').textContent = `（${PALETTES[target].label}）`;
+      }
+      populateFillSets('N60');
       const BAYER4 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
       const TILE_LEVELS = [0, 0.25, 0.5, 0.75, 1];
       function boxBlurChan(src, w, h, k) {
@@ -997,7 +1028,8 @@
             const fillOn = $('fill-on').checked;
             const setIdx = +$('fill-set').value;
             const minReg = +$('fill-minreg').value;
-            const pal = P6SETS[setIdx];
+            const pal = PALETTES[basic].sets[setIdx].colors;
+            const palName = PALETTES[basic].sets[setIdx].name;
             let fillLines = [], nFillRects = 0, nRegions = 0, nRegionsKept = 0, nRegionsSkipped = 0, fillImg = null, outlineIdx = 0;
             if (fillOn) {
               const tp = tilePaint(rgba, pal, edge, 32);
@@ -1051,7 +1083,7 @@
             } else {
               $('fill-compare').hidden = true;
             }
-            const header = `' RetroDraw: ${fillOn ? 'fill + outline' : 'outline'} -> drawing commands (${basic} BASIC)\n' Palette set ${setIdx+1}: ${P6SET_NAMES[setIdx]} (colors 0-3 in this order; set the palette before running)\n' CIRCLE angles in radians; aspect = ry/rx (ellipse)\n' Drawing order: fill first, then outline on top.\n`;
+            const header = `' RetroDraw: ${fillOn ? 'fill + outline' : 'outline'} -> drawing commands (${basic} BASIC)\n' Palette (${PALETTES[basic].label}) set ${setIdx+1}: ${palName} (colors 0-3 in this order; set the palette before running)\n' CIRCLE angles in radians; aspect = ry/rx (ellipse)\n' Drawing order: fill first, then outline on top.\n`;
             let body = '';
             if (fillOn) {
               body += fillSubroutine() + '\n';
@@ -1124,15 +1156,24 @@
       drop.addEventListener('dragleave', () => drop.classList.remove('over'));
       drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); loadFile(e.dataTransfer.files[0]); });
       const params = [['p-thresh','v-thresh',v=>v],['p-tol','v-tol',v=>(+v).toFixed(1)],['p-minpath','v-minpath',v=>v],['p-minloop','v-minloop',v=>v],['p-gap','v-gap',v=>v]];
-      for (const [pid, vid, fmt] of params) {
-        $(pid).addEventListener('input', () => { $(vid).textContent = fmt($(pid).value); });
-        $(pid).addEventListener('change', () => { if (srcImage) runPipeline(); });
+      // Debounced live re-run while a slider is dragged: the label updates
+      // immediately, the (slow) pipeline runs 400ms after the last move.
+      // Releasing the slider ('change') runs it right away.
+      let runTimer = null;
+      function scheduleRun() {
+        clearTimeout(runTimer);
+        runTimer = setTimeout(() => { if (srcImage) runPipeline(); }, 400);
       }
-      $('p-basic').addEventListener('change', () => { if (srcImage) runPipeline(); });
+      function runNow() { clearTimeout(runTimer); if (srcImage) runPipeline(); }
+      for (const [pid, vid, fmt] of params) {
+        $(pid).addEventListener('input', () => { $(vid).textContent = fmt($(pid).value); scheduleRun(); });
+        $(pid).addEventListener('change', runNow);
+      }
+      $('p-basic').addEventListener('change', () => { populateFillSets($('p-basic').value); if (srcImage) runPipeline(); });
       $('fill-on').addEventListener('change', () => { if (srcImage) runPipeline(); });
       $('fill-set').addEventListener('change', () => { if (srcImage) runPipeline(); });
-      $('fill-minreg').addEventListener('input', () => { $('v-minreg').textContent = $('fill-minreg').value; });
-      $('fill-minreg').addEventListener('change', () => { if (srcImage) runPipeline(); });
+      $('fill-minreg').addEventListener('input', () => { $('v-minreg').textContent = $('fill-minreg').value; scheduleRun(); });
+      $('fill-minreg').addEventListener('change', runNow);
       $('run').addEventListener('click', runPipeline);
       $('dl').addEventListener('click', () => {
         if (!lastBas) return;
