@@ -170,7 +170,7 @@
           <div>
             <label><input type="checkbox" id="fill-on" checked style="width:auto" /> 塗りを含める（先に塗り、最後に線を描く）</label>
           </div>
-          <div>
+          <div id="fill-set-wrap">
             <label>パレットセット <span id="fill-set-machine">（PC-6001 SCREEN 4）</span></label>
             <select id="fill-set"></select>
           </div>
@@ -179,7 +179,7 @@
             <input type="range" id="fill-minreg" min="1" max="20" step="1" value="4" />
           </div>
         </div>
-        <p class="hint">塗りは4×4ブロックのタイル（2色＋Bayerディザ）で画像を再現し、同じタイルの領域をまとめて矩形に分解します。各矩形はディザ塗りサブルーチン（*DFILL）の呼び出し1文です。大きい領域から順に塗るペインター方式です。パレットは対象BASICの機種に合わせた4色セットです（線のLINE/CIRCLE/PSET文法は3機種で共通）。</p>
+        <p class="hint">塗りは4×4ブロックのタイル（2色＋Bayerディザ）で画像を再現し、同じタイルの領域をまとめて矩形に分解します。各矩形はディザ塗りサブルーチン（*DFILL）の呼び出し1文です。大きい領域から順に塗るペインター方式で、省いた小さい領域は隣の大きい領域に吸収して塗りつぶすので、塗り残し（黒）は出ません。N60は4色セットから選びますが、MSX（15色）・N88（8色）はパレット制限がないため全色を使います。線のLINE/CIRCLE/PSET文法は3機種で共通です。</p>
       </section>
 
       <section class="card" id="out-card" hidden>
@@ -708,12 +708,19 @@
       }
 
       // ---------- tile paint (fill) ----------
-      // 4-color palette sets per target machine. The fill (*DFILL) uses
-      // palette indices 0-3, so the same subroutine works for any set;
-      // only the RGB values (hence which tile each block picks) change.
+      // Palette per target machine.
+      // N60 (PC-6001 SCREEN 4) has a real 4-color limit: the fill picks one
+      // of 6 four-color sets, and intermediate colors are dithers of 2 of
+      // those 4 colors.
+      // MSX (SCREEN 2) and N88 (V1) have NO palette limit: all colors are
+      // available at once (MSX 15, N88 digital 8), so the fill uses the
+      // full palette and intermediate colors are dithers of any 2 colors.
+      // `codes` maps a palette index to the machine's color number used in
+      // the .bas (MSX codes are 1-15, N88/N60 codes are 0-7 / 0-3).
       const PALETTES = {
         N60: {
           label: 'PC-6001 SCREEN 4',
+          hasSets: true,
           sets: [
             { name: '黒・青紫・橙・赤紫', colors: [[0,0,0],[100,90,240],[255,128,0],[200,60,170]] },
             { name: '青緑・空色・黄緑・灰色', colors: [[0,190,170],[110,180,255],[150,210,30],[165,165,165]] },
@@ -722,36 +729,54 @@
             { name: '緑・黄・青・赤', colors: [[0,255,0],[255,255,0],[0,0,255],[255,0,0]] },
             { name: '白・シアン・マゼンタ・橙', colors: [[255,255,255],[0,255,255],[255,0,255],[255,128,0]] },
           ],
+          codes: [0,1,2,3],
         },
         MSX: {
           label: 'MSX SCREEN 2（15色）',
+          hasSets: false,
           sets: [
-            { name: '黒・緑・青・白', colors: [[0,0,0],[33,200,66],[68,68,255],[255,255,255]] },
-            { name: '黒・暗赤・赤・淡黄', colors: [[0,0,0],[173,32,32],[255,80,80],[221,221,127]] },
-            { name: '青・淡青・シアン・白', colors: [[68,68,255],[87,153,255],[33,200,200],[255,255,255]] },
-            { name: '黒・マゼンタ・灰・白', colors: [[0,0,0],[203,79,204],[204,204,204],[255,255,255]] },
+            { name: '全15色', colors: [
+              [0,0,0],[33,200,66],[94,220,120],[68,68,255],[87,153,255],
+              [173,32,32],[33,200,200],[255,80,80],[255,130,130],[204,170,0],
+              [221,221,127],[33,130,33],[203,79,204],[204,204,204],[255,255,255],
+            ] },
           ],
+          codes: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],
         },
         N88: {
           label: 'PC-8801 V1（デジタル8色）',
+          hasSets: false,
           sets: [
-            { name: '黒・青・赤・白', colors: [[0,0,0],[0,0,255],[255,0,0],[255,255,255]] },
-            { name: '黒・緑・シアン・黄', colors: [[0,0,0],[0,255,0],[0,255,255],[255,255,0]] },
-            { name: '青・マゼンタ・シアン・白', colors: [[0,0,255],[255,0,255],[0,255,255],[255,255,255]] },
-            { name: '黒・赤・マゼンタ・白', colors: [[0,0,0],[255,0,0],[255,0,255],[255,255,255]] },
+            { name: '全8色', colors: [
+              [0,0,0],[0,0,255],[255,0,0],[255,0,255],
+              [0,255,0],[0,255,255],[255,255,0],[255,255,255],
+            ] },
           ],
+          codes: [0,1,2,3,4,5,6,7],
         },
       };
       function populateFillSets(target) {
         const sel = $('fill-set');
+        const wrap = $('fill-set-wrap');
         sel.innerHTML = '';
-        PALETTES[target].sets.forEach((s, i) => {
+        if (PALETTES[target].hasSets) {
+          wrap.style.display = '';
+          PALETTES[target].sets.forEach((s, i) => {
+            const o = document.createElement('option');
+            o.value = String(i);
+            o.textContent = `セット${i+1}：${s.name}`;
+            sel.appendChild(o);
+          });
+          sel.value = '0';
+        } else {
+          // No palette choice: all colors are used at once.
+          wrap.style.display = 'none';
           const o = document.createElement('option');
-          o.value = String(i);
-          o.textContent = `セット${i+1}：${s.name}`;
+          o.value = '0';
+          o.textContent = PALETTES[target].sets[0].name;
           sel.appendChild(o);
-        });
-        sel.value = '0';
+          sel.value = '0';
+        }
         $('fill-set-machine').textContent = `（${PALETTES[target].label}）`;
       }
       populateFillSets('N60');
@@ -855,7 +880,7 @@
         const BH = blocks.length, BW = blocks[0].length;
         const lab = Array.from({length: BH}, () => new Int32Array(BW).fill(-1));
         const regions = [];
-        const key = (b) => b.p0*100 + b.p1*10 + Math.round(b.t*4);
+        const key = (b) => b.p0*1000 + b.p1*10 + Math.round(b.t*4);
         let nid = 0;
         for (let y = 0; y < BH; y++) {
           for (let x = 0; x < BW; x++) {
@@ -880,6 +905,57 @@
         }
         regions.sort((a, b) => b.cells.length - a.cells.length);
         return regions;
+      }
+      // Absorb skipped (small) regions into the largest adjacent kept region,
+      // so no block is left unpainted (no black holes) when minReg is large.
+      // Each skipped block is reassigned to the largest kept region touching
+      // it (4-neighbour). Iterated, so a cluster of skipped blocks is
+      // absorbed from its border inward. Kept regions are painted large
+      // (with the absorbed blocks); kept small regions painted later
+      // overwrite the overshoot and refine the boundary.
+      // Returns { regions, nAbsorbed }.
+      function absorbSkipped(blocks, regions, minReg) {
+        const BH = blocks.length, BW = blocks[0].length;
+        const owner = Array.from({length: BH}, () => new Int32Array(BW).fill(-1));
+        const sizeById = new Map();
+        for (const r of regions) {
+          sizeById.set(r.id, r.cells.length);
+          for (const [x, y] of r.cells) owner[y][x] = r.id;
+        }
+        const kept = new Set(regions.filter(r => r.cells.length >= minReg).map(r => r.id));
+        const byId = new Map(regions.map(r => [r.id, r]));
+        let nAbsorbed = 0;
+        let changed = true;
+        let guard = 0;
+        while (changed && guard < 200) {
+          changed = false;
+          guard++;
+          for (let y = 0; y < BH; y++) {
+            for (let x = 0; x < BW; x++) {
+              const id = owner[y][x];
+              if (id < 0 || kept.has(id)) continue;
+              // skipped block: find the largest adjacent kept region
+              let best = -1, bestSize = -1;
+              for (const [nx, ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]) {
+                if (nx < 0 || nx >= BW || ny < 0 || ny >= BH) continue;
+                const nid = owner[ny][nx];
+                if (nid < 0 || !kept.has(nid)) continue;
+                const s = sizeById.get(nid);
+                if (s > bestSize) { bestSize = s; best = nid; }
+              }
+              if (best >= 0) {
+                owner[y][x] = best;
+                byId.get(best).cells.push([x, y]);
+                sizeById.set(best, sizeById.get(best) + 1);
+                nAbsorbed++;
+                changed = true;
+              }
+            }
+          }
+        }
+        const out = regions.filter(r => kept.has(r.id));
+        out.sort((a, b) => b.cells.length - a.cells.length);
+        return { regions: out, nAbsorbed };
       }
       // Greedy rectangle decomposition of a region's block cells.
       function greedyRects(cells) {
@@ -906,7 +982,7 @@
       function fillSubroutine() {
         return [
           `' --- dither fill subroutine (*DFILL) ---`,
-          `' Call with X1,Y1,X2,Y2 (inclusive), C1,C2 (palette 0-3), T (0/4/8/12/16 = count of C1 pixels)`,
+          `' Call with X1,Y1,X2,Y2 (inclusive), C1,C2 (machine color numbers), T (0/4/8/12/16 = count of C1 pixels)`,
           `' Pixels with Bayer value < T are C1, the rest are C2.`,
           `DIM B(3,3)`,
           `DATA 0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5`,
@@ -914,10 +990,20 @@
           `*DFILL:FOR Y=Y1 TO Y2:FOR X=X1 TO X2:IF B(Y AND 3,X AND 3)<T THEN PSET(X,Y),C1 ELSE PSET(X,Y),C2:NEXT X:NEXT Y:RETURN`,
         ].join('\n');
       }
-      function fillCall(bx, by, bw, bh, c1, c2, t) {
-        const x1 = bx*4, y1 = by*4, x2 = bx*4 + bw*4 - 1, y2 = by*4 + bh*4 - 1;
+      // c1/c2 are palette indices (for rendering); the .bas line uses the
+      // machine's color numbers (codes[palette index]).
+      // The rectangle is expanded by 1 block on each side (clamped to the
+      // image): each region paints larger than its exact cells, so adjacent
+      // regions overlap at the boundary and no gap is left. Painter order
+      // (large to small) lets the smaller region painted later claim the
+      // overlap and refine the boundary.
+      function fillCall(bx, by, bw, bh, c1, c2, t, codes) {
+        const ex = Math.max(0, bx - 1), ey = Math.max(0, by - 1);
+        const ex2 = Math.min(80, bx + bw + 1), ey2 = Math.min(50, by + bh + 1);
+        const x1 = ex*4, y1 = ey*4, x2 = ex2*4 - 1, y2 = ey2*4 - 1;
         const T = Math.round(t*16);
-        return { x1, y1, x2, y2, c1, c2, T, line: `X1=${x1},Y1=${y1},X2=${x2},Y2=${y2},C1=${c1},C2=${c2},T=${T}:GOSUB *DFILL` };
+        const C1 = codes[c1], C2 = codes[c2];
+        return { x1, y1, x2, y2, c1, c2, T, line: `X1=${x1},Y1=${y1},X2=${x2},Y2=${y2},C1=${C1},C2=${C2},T=${T}:GOSUB *DFILL` };
       }
       // Render the actual fill rectangles (as the .bas will draw them) to a
       // 320x200 RGBA image. Painter order: as listed (large to small), so a
@@ -1049,18 +1135,24 @@
             const minReg = +$('fill-minreg').value;
             const pal = PALETTES[basic].sets[setIdx].colors;
             const palName = PALETTES[basic].sets[setIdx].name;
-            let fillLines = [], fillRects = [], nFillRects = 0, nRegions = 0, nRegionsKept = 0, nRegionsSkipped = 0, fillImg = null, outlineIdx = 0;
+            const codes = PALETTES[basic].codes;
+            let fillLines = [], fillRects = [], nFillRects = 0, nRegions = 0, nRegionsKept = 0, nRegionsSkipped = 0, nAbsorbed = 0, fillImg = null, outlineIdx = 0;
             if (fillOn) {
               const tp = tilePaint(rgba, pal, edge, 32);
               fillImg = tp.img; outlineIdx = tp.outlineIdx;
-              const regions = segmentRegions(tp.blocks);
-              nRegions = regions.length;
+              const regions0 = segmentRegions(tp.blocks);
+              nRegions = regions0.length;
+              nRegionsSkipped = regions0.filter(r => r.cells.length < minReg).length;
+              // Absorb skipped blocks into the largest adjacent kept region,
+              // so a large minReg leaves no black holes.
+              const abs = absorbSkipped(tp.blocks, regions0, minReg);
+              const regions = abs.regions;
+              nAbsorbed = abs.nAbsorbed;
+              nRegionsKept = regions.length;
               for (const r of regions) {
-                if (r.cells.length < minReg) { nRegionsSkipped++; continue; }
-                nRegionsKept++;
                 const rects = greedyRects(r.cells);
                 for (const [bx, by, bw, bh] of rects) {
-                  const fr = fillCall(bx, by, bw, bh, r.p1, r.p0, r.t);
+                  const fr = fillCall(bx, by, bw, bh, r.p1, r.p0, r.t, codes);
                   fillRects.push(fr);
                   fillLines.push(fr.line);
                   nFillRects++;
@@ -1124,7 +1216,7 @@
               `LINE: ${nLine}  CIRCLE(真円): ${nFull}  ARC: ${nArc}  ELLIPSE: ${nEll}  ELL-ARC: ${nEllArc}  PSET: ${nPset}\n` +
               `再現率: ${cov}%  精度: ${prec}%  （thresh=${thresh}, tol=${tol}, min_path=${minPath}, min_loop=${minLoop}, gap_max=${gapMax}）\n` +
               `パス: ${nPathsRaw}本 → 橋渡し ${nMerges}回 → 平行重複を ${nDedupPath}本除去 → ${kept.length}本採用（${nDropped}本破棄）→ コマンド重複を ${nDroppedDup}文除去` +
-              (fillOn ? `\n塗り: 領域 ${nRegions}個（${nRegionsKept}個採用、${nRegionsSkipped}個を省略）→ 矩形 ${nFillRects}個（大きい領域から順に塗る）` : '');
+              (fillOn ? `\n塗り: 領域 ${nRegions}個（${nRegionsKept}個採用、${nRegionsSkipped}個を省略→${nAbsorbed}ブロックを隣の大きい領域に吸収し塗り残しなし）→ 矩形 ${nFillRects}個（大きい領域から順に塗る）` : '');
             $('out-card').hidden = false;
             $('status').textContent = `完了：${totalCmds}文`;
           } catch (err) {
