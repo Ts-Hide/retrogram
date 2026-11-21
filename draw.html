@@ -196,7 +196,7 @@
         </div>
         <div class="compare" id="fill-compare" style="margin-top:12px">
           <figure>
-            <figcaption>塗り（タイルペイント）</figcaption>
+            <figcaption>塗り（.bas が描く実際の塗り）</figcaption>
             <canvas id="cv-fill" width="640" height="400"></canvas>
           </figure>
           <figure>
@@ -917,7 +917,26 @@
       function fillCall(bx, by, bw, bh, c1, c2, t) {
         const x1 = bx*4, y1 = by*4, x2 = bx*4 + bw*4 - 1, y2 = by*4 + bh*4 - 1;
         const T = Math.round(t*16);
-        return `X1=${x1},Y1=${y1},X2=${x2},Y2=${y2},C1=${c1},C2=${c2},T=${T}:GOSUB *DFILL`;
+        return { x1, y1, x2, y2, c1, c2, T, line: `X1=${x1},Y1=${y1},X2=${x2},Y2=${y2},C1=${c1},C2=${c2},T=${T}:GOSUB *DFILL` };
+      }
+      // Render the actual fill rectangles (as the .bas will draw them) to a
+      // 320x200 RGBA image. Painter order: as listed (large to small), so a
+      // later rectangle overwrites an earlier one. Skipped regions stay black.
+      function renderFillRects(rects, pal) {
+        const img = new Uint8ClampedArray(W*H*4);
+        for (let i = 0; i < W*H; i++) img[i*4+3] = 255;
+        for (const r of rects) {
+          const c1 = pal[r.c1], c2 = pal[r.c2];
+          for (let y = r.y1; y <= r.y2; y++) {
+            for (let x = r.x1; x <= r.x2; x++) {
+              const b = BAYER4[(y & 3) * 4 + (x & 3)];
+              const c = b < r.T ? c1 : c2;
+              const p = (y * W + x) * 4;
+              img[p] = c[0]; img[p+1] = c[1]; img[p+2] = c[2];
+            }
+          }
+        }
+        return img;
       }
 
       // ---------- main pipeline ----------
@@ -1030,7 +1049,7 @@
             const minReg = +$('fill-minreg').value;
             const pal = PALETTES[basic].sets[setIdx].colors;
             const palName = PALETTES[basic].sets[setIdx].name;
-            let fillLines = [], nFillRects = 0, nRegions = 0, nRegionsKept = 0, nRegionsSkipped = 0, fillImg = null, outlineIdx = 0;
+            let fillLines = [], fillRects = [], nFillRects = 0, nRegions = 0, nRegionsKept = 0, nRegionsSkipped = 0, fillImg = null, outlineIdx = 0;
             if (fillOn) {
               const tp = tilePaint(rgba, pal, edge, 32);
               fillImg = tp.img; outlineIdx = tp.outlineIdx;
@@ -1041,11 +1060,16 @@
                 nRegionsKept++;
                 const rects = greedyRects(r.cells);
                 for (const [bx, by, bw, bh] of rects) {
-                  fillLines.push(fillCall(bx, by, bw, bh, r.p1, r.p0, r.t));
+                  const fr = fillCall(bx, by, bw, bh, r.p1, r.p0, r.t);
+                  fillRects.push(fr);
+                  fillLines.push(fr.line);
                   nFillRects++;
                 }
               }
-              drawRgbToCanvas($('cv-fill'), fillImg);
+              // Preview the ACTUAL fill (the rectangles the .bas draws), not
+              // the tile-paint target, so skipping regions shows up as black.
+              const fillRendered = renderFillRects(fillRects, pal);
+              drawRgbToCanvas($('cv-fill'), fillRendered);
               // final: fill + outline (in the outline color)
               const oc = pal[outlineIdx];
               const finalCv = $('cv-final');
@@ -1055,7 +1079,7 @@
               off.width = W; off.height = H;
               const octx = off.getContext('2d');
               const fimg = octx.createImageData(W, H);
-              fimg.data.set(fillImg);
+              fimg.data.set(fillRendered);
               octx.putImageData(fimg, 0, 0);
               octx.strokeStyle = `rgb(${oc[0]},${oc[1]},${oc[2]})`;
               octx.fillStyle = `rgb(${oc[0]},${oc[1]},${oc[2]})`;
