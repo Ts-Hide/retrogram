@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>RetroDraw — 画像を描画コマンドに変換</title>
+    <style>
+      :root {
+        --bg: #e9ebee;
+        --panel: #ffffff;
+        --panel2: #f2f4f7;
+        --ink: #191c20;
+        --sub: #59626f;
+        --line: #c6ccd5;
+        --accent: #bc4c08;
+        --accent-ink: #ffffff;
+        --teal: #0b7285;
+        --ok: #1e7d32;
+        --warn: #b3261e;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1114;
+          --panel: #1a1d23;
+          --panel2: #12151a;
+          --ink: #eceff3;
+          --sub: #9aa3af;
+          --line: #30363f;
+          --accent: #f08c3a;
+          --accent-ink: #1a1206;
+          --teal: #43c3cf;
+          --ok: #7bc47f;
+          --warn: #ef9a94;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", "Noto Sans JP", sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+      h1 { font-size: 26px; margin: 0 0 4px; }
+      .sub { color: var(--sub); margin: 0 0 16px; }
+      .sub a { color: var(--teal); }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .card h2 { font-size: 17px; margin: 0 0 10px; }
+      .drop {
+        border: 2px dashed var(--line);
+        border-radius: 10px;
+        padding: 22px 16px;
+        text-align: center;
+        color: var(--sub);
+        cursor: pointer;
+      }
+      .drop.over { border-color: var(--accent); color: var(--accent); }
+      .drop input { display: none; }
+      .samples { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+      .samples button {
+        border: 1px solid var(--line);
+        background: var(--panel2);
+        border-radius: 8px;
+        padding: 0;
+        cursor: pointer;
+        overflow: hidden;
+        width: 96px;
+      }
+      .samples button img { display: block; width: 100%; height: 64px; object-fit: cover; }
+      .samples button span { display: block; font-size: 12px; padding: 3px 4px; color: var(--ink); }
+      .samples button.sel { outline: 2px solid var(--accent); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+      label { display: block; font-size: 13px; color: var(--sub); margin-bottom: 2px; }
+      label b { color: var(--ink); font-weight: 600; }
+      input[type=range] { width: 100%; }
+      select, input[type=number] {
+        width: 100%; padding: 7px 8px; border: 1px solid var(--line);
+        border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 14px;
+      }
+      .btn {
+        display: inline-block; border: 0; border-radius: 9px; padding: 10px 18px;
+        background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 700;
+        cursor: pointer;
+      }
+      .btn.ghost { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); font-weight: 600; }
+      .btn:disabled { opacity: .5; cursor: default; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      @media (max-width: 640px) { .compare { grid-template-columns: 1fr; } }
+      .compare figure { margin: 0; }
+      .compare figcaption { font-size: 13px; color: var(--sub); margin-bottom: 4px; }
+      .compare canvas { width: 100%; height: auto; display: block; background: #000; border-radius: 8px; image-rendering: pixelated; }
+      .stats { font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+      .stats b { color: var(--accent); }
+      pre.bas {
+        font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+        background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+        padding: 12px; max-height: 320px; overflow: auto; white-space: pre; margin: 0;
+      }
+      .note { font-size: 13px; color: var(--sub); }
+      .status { font-size: 13px; color: var(--sub); min-height: 1.4em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>RetroDraw</h1>
+      <p class="sub">画像の輪郭を、描画コマンド（LINE / CIRCLE / PSET）に変換します。昔のAVGのように、少ないコマンドで本質を描くためのツールです。<a href="./">Retrogram（画像変換）に戻る</a></p>
+
+      <section class="card">
+        <h2>1. 画像を選ぶ</h2>
+        <div class="drop" id="drop">
+          <input type="file" id="file" accept="image/*" />
+          ここに画像をドロップ、またはクリックして選択
+        </div>
+        <div class="samples" id="samples"></div>
+      </section>
+
+      <section class="card">
+        <h2>2. パラメータ</h2>
+        <div class="grid">
+          <div>
+            <label>輪郭しきい値 <b id="v-thresh">48</b> <span>（16–96）</span></label>
+            <input type="range" id="p-thresh" min="16" max="96" step="1" value="48" />
+          </div>
+          <div>
+            <label>近似の許容誤差 tol <b id="v-tol">3.0</b> <span>（0.5–5.0）大きいほど粗い</span></label>
+            <input type="range" id="p-tol" min="0.5" max="5" step="0.5" value="3" />
+          </div>
+          <div>
+            <label>最小パス長 min_path <b id="v-minpath">15</b> <span>（1–40）短い線を落とす</span></label>
+            <input type="range" id="p-minpath" min="1" max="40" step="1" value="15" />
+          </div>
+          <div>
+            <label>閉ループの最小長 min_loop <b id="v-minloop">10</b> <span>（3–20）短くても残す閉じた形</span></label>
+            <input type="range" id="p-minloop" min="3" max="20" step="1" value="10" />
+          </div>
+          <div>
+            <label>ドット抜けの橋渡し gap_max <b id="v-gap">5</b> <span>（0–10）途切れた線をつなぐ</span></label>
+            <input type="range" id="p-gap" min="0" max="10" step="1" value="5" />
+          </div>
+          <div>
+            <label>対象BASIC</label>
+            <select id="p-basic">
+              <option value="N60">N60 BASIC（PC-6001）</option>
+              <option value="MSX">MSX BASIC</option>
+              <option value="N88">N88 BASIC（PC-8801）</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn" id="run">変換する</button>
+          <span class="status" id="status">画像を選んでください。</span>
+        </div>
+      </section>
+
+      <section class="card" id="out-card" hidden>
+        <h2>3. 結果</h2>
+        <div class="compare">
+          <figure>
+            <figcaption>元の輪郭（左）</figcaption>
+            <canvas id="cv-edge" width="640" height="400"></canvas>
+          </figure>
+          <figure>
+            <figcaption>コマンドでの描画（右）</figcaption>
+            <canvas id="cv-cmd" width="640" height="400"></canvas>
+          </figure>
+        </div>
+        <p class="stats" id="stats" style="margin-top:12px"></p>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="dl">.bas をダウンロード</button>
+          <button class="btn ghost" id="copy">プログラムをコピー</button>
+        </div>
+        <pre class="bas" id="bas" style="margin-top:10px"></pre>
+        <p class="note" style="margin-top:10px">CIRCLE の角度はラジアン、aspect は ry/rx（楕円）です。LINE / CIRCLE / PSET の文法は N60・MSX・N88 で共通です。</p>
+      </section>
+
+      <p class="note">処理はすべてブラウザ内で行われ、画像は外部に送信されません。描画エリアは 320×200 です。</p>
+    </main>
+    <script>
+      // ===== RetroDraw: v9 pipeline ported from greedy_vectorize9.py =====
+      const W = 320, H = 200;
+      const NB8 = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+      const $ = (id) => document.getElementById(id);
+      let srcImage = null;   // HTMLImageElement
+      let lastBas = '';
+      let lastName = 'draw';
+
+      // ---------- image -> 320x200 fit ----------
+      function resizeFit(img) {
+        const c = document.createElement('canvas');
+        c.width = W; c.height = H;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        const s = Math.min(W / img.naturalWidth, H / img.naturalHeight);
+        const nw = Math.max(1, Math.round(img.naturalWidth * s));
+        const nh = Math.max(1, Math.round(img.naturalHeight * s));
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, (W - nw) >> 1, (H - nh) >> 1, nw, nh);
+        return ctx.getImageData(0, 0, W, H).data; // RGBA
+      }
+
+      // ---------- edge mask with NMS ----------
+      function edgeMaskNMS(rgba, thresh) {
+        const lum = new Float64Array(W * H);
+        for (let i = 0; i < W * H; i++) {
+          lum[i] = 0.299 * rgba[i*4] + 0.587 * rgba[i*4+1] + 0.114 * rgba[i*4+2];
+        }
+        // 3x3 box blur (edge padding)
+        const lb = new Float64Array(W * H);
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            let s = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+              const yy = Math.min(H-1, Math.max(0, y + dy));
+              for (let dx = -1; dx <= 1; dx++) {
+                const xx = Math.min(W-1, Math.max(0, x + dx));
+                s += lum[yy * W + xx];
+              }
+            }
+            lb[y * W + x] = s / 9;
+          }
+        }
+        const mag = new Float64Array(W * H);
+        const ang = new Float64Array(W * H);
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const xm = x > 0 ? lb[y*W + x - 1] : lb[y*W + x];
+            const xp = x < W-1 ? lb[y*W + x + 1] : lb[y*W + x];
+            const ym = y > 0 ? lb[(y-1)*W + x] : lb[y*W + x];
+            const yp = y < H-1 ? lb[(y+1)*W + x] : lb[y*W + x];
+            const gx = (xp - xm) / 2, gy = (yp - ym) / 2;
+            mag[y*W + x] = Math.hypot(gx, gy);
+            ang[y*W + x] = ((Math.atan2(gy, gx) * 180 / Math.PI) % 180 + 180) % 180;
+          }
+        }
+        const at = (x, y) => mag[Math.min(H-1, Math.max(0, y)) * W + Math.min(W-1, Math.max(0, x))];
+        const edge = new Uint8Array(W * H);
+        const t2 = thresh / 2;
+        for (let y = 1; y < H-1; y++) {
+          for (let x = 1; x < W-1; x++) {
+            const m = mag[y*W + x];
+            if (m <= t2) continue;
+            const a = ang[y*W + x];
+            let n1, n2;
+            if (a >= 22.5 && a < 67.5) { n1 = at(x-1, y-1); n2 = at(x+1, y+1); }
+            else if (a >= 67.5 && a < 112.5) { n1 = at(x, y-1); n2 = at(x, y+1); }
+            else if (a >= 112.5 && a < 157.5) { n1 = at(x+1, y-1); n2 = at(x-1, y+1); }
+            else { n1 = at(x-1, y); n2 = at(x+1, y); }
+            if (m >= n1 && m >= n2) edge[y*W + x] = 1;
+          }
+        }
+        return edge;
+      }
+
+      // ---------- straight tracing ----------
+      function tracePathsStraight(edge) {
+        const key = (x, y) => y * W + x;
+        const pts = new Set();
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (edge[y*W+x]) pts.add(key(x, y));
+        const neighbours = (p) => {
+          const x = p % W, y = (p / W) | 0;
+          const out = [];
+          for (const [dx, dy] of NB8) {
+            const q = key(x + dx, y + dy);
+            if (pts.has(q)) out.push(q);
+          }
+          return out;
+        };
+        const deg = new Map();
+        for (const p of pts) deg.set(p, neighbours(p).length);
+        const visited = new Set(); // "a,b" edge keys, a<b
+        const ekey = (a, b) => a < b ? a + ',' + b : b + ',' + a;
+        const paths = [];
+        function straightestNext(prev, cur) {
+          const px = prev % W, py = (prev / W) | 0;
+          const cx = cur % W, cy = (cur / W) | 0;
+          const dxIn = cx - px, dyIn = cy - py;
+          const lin = Math.hypot(dxIn, dyIn);
+          let best = null, bestDot = -2;
+          for (const q of neighbours(cur)) {
+            if (q === prev) continue;
+            if (visited.has(ekey(cur, q))) continue;
+            const qx = q % W, qy = (q / W) | 0;
+            const dx = qx - cx, dy = qy - cy;
+            const dot = (dxIn * dx + dyIn * dy) / (lin * Math.hypot(dx, dy));
+            if (dot > bestDot) { bestDot = dot; best = q; }
+          }
+          return best;
+        }
+        function walkForward(start, first) {
+          const path = [start, first];
+          visited.add(ekey(start, first));
+          let prev = start, cur = first;
+          for (;;) {
+            const nxt = straightestNext(prev, cur);
+            if (nxt === null) break;
+            if (nxt === start) { path.push(nxt); visited.add(ekey(cur, nxt)); break; }
+            path.push(nxt);
+            visited.add(ekey(cur, nxt));
+            prev = cur; cur = nxt;
+          }
+          return path.map(p => [p % W, (p / W) | 0]);
+        }
+        const sortedPts = [...pts].sort((a, b) => a - b);
+        for (const p of sortedPts) {
+          if (deg.get(p) !== 1) continue;
+          for (const q of neighbours(p)) {
+            if (!visited.has(ekey(p, q))) paths.push(walkForward(p, q));
+          }
+        }
+        for (const p of sortedPts) {
+          if (deg.get(p) <= 2) continue;
+          for (const q of neighbours(p)) {
+            if (!visited.has(ekey(p, q))) paths.push(walkForward(p, q));
+          }
+        }
+        for (const p of sortedPts) {
+          for (const q of neighbours(p)) {
+            if (!visited.has(ekey(p, q))) paths.push(walkForward(p, q));
+          }
+        }
+        for (const p of pts) if (deg.get(p) === 0) paths.push([[p % W, (p / W) | 0]]);
+        return paths;
+      }
+
+      // ---------- gap bridging ----------
+      function unit(v) {
+        const n = Math.hypot(v[0], v[1]);
+        return n === 0 ? null : [v[0]/n, v[1]/n];
+      }
+      const dot2 = (a, b) => a[0]*b[0] + a[1]*b[1];
+      function isClosedPath(p) {
+        return p.length >= 3 && Math.abs(p[0][0]-p[p.length-1][0]) <= 1 && Math.abs(p[0][1]-p[p.length-1][1]) <= 1;
+      }
+      function mergeGaps(paths, gapMax = 5, cosMin = 0.7) {
+        paths = paths.map(p => p.slice());
+        const endDir = (p, atStart) => {
+          if (p.length < 2) return null;
+          if (atStart) return unit([p[0][0]-p[1][0], p[0][1]-p[1][1]]);
+          return unit([p[p.length-1][0]-p[p.length-2][0], p[p.length-1][1]-p[p.length-2][1]]);
+        };
+        let changed = true, nMerges = 0;
+        while (changed) {
+          changed = false;
+          outer:
+          for (let i = 0; i < paths.length; i++) {
+            if (isClosedPath(paths[i]) || paths[i].length < 2) continue;
+            for (let j = 0; j < paths.length; j++) {
+              if (i === j || isClosedPath(paths[j]) || paths[j].length < 2) continue;
+              const combos = [
+                [false, true, false, false], [false, false, false, true],
+                [true, true, true, false], [true, false, true, true],
+              ];
+              for (const [ai, aj, revA, revB] of combos) {
+                const A = paths[i], B = paths[j];
+                const pa = ai ? A[0] : A[A.length-1];
+                const pb = aj ? B[0] : B[B.length-1];
+                const g = [pb[0]-pa[0], pb[1]-pa[1]];
+                const dist = Math.hypot(g[0], g[1]);
+                if (dist > gapMax || dist === 0) continue;
+                const ug = unit(g);
+                const da = endDir(A, ai), db = endDir(B, aj);
+                if (!da || !db) continue;
+                if (dot2(da, ug) < cosMin) continue;
+                if (dot2(ug, [-db[0], -db[1]]) < cosMin) continue;
+                const a = revA ? A.slice().reverse() : A.slice();
+                const b = revB ? B.slice().reverse() : B.slice();
+                paths[i] = a.concat(b);
+                paths.splice(j, 1);
+                nMerges++;
+                changed = true;
+                break outer;
+              }
+            }
+          }
+        }
+        return [paths, nMerges];
+      }
+
+      // ---------- path dedup (parallel duplicates) ----------
+      function pathClose(a, b, dist = 2) {
+        const bset = new Set(b.map(p => p[0] + ',' + p[1]));
+        let hit = 0;
+        for (const [x, y] of a) {
+          let found = false;
+          for (let dx = -dist; dx <= dist && !found; dx++)
+            for (let dy = -dist; dy <= dist; dy++)
+              if (bset.has((x+dx) + ',' + (y+dy))) { found = true; break; }
+          if (found) hit++;
+        }
+        return hit / Math.max(1, a.length);
+      }
+      function dedupPaths(paths) {
+        const sorted = paths.slice().sort((a, b) => b.length - a.length);
+        const kept = [];
+        let dropped = 0;
+        for (const p of sorted) {
+          let dup = false;
+          for (const q of kept) if (pathClose(p, q, 2) > 0.6) { dup = true; break; }
+          if (dup) dropped++; else kept.push(p);
+        }
+        return [kept, dropped];
+      }
+
+      // ---------- fitting ----------
+      function distPointSegment(px, py, x1, y1, x2, y2) {
+        const dx = x2-x1, dy = y2-y1, L2 = dx*dx + dy*dy;
+        if (L2 === 0) return Math.hypot(px-x1, py-y1);
+        let t = ((px-x1)*dx + (py-y1)*dy) / L2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(px-(x1+t*dx), py-(y1+t*dy));
+      }
+      // Solve 3x3 linear system by Gaussian elimination. Returns null if singular.
+      function solve3(A, b) {
+        const M = [A[0].slice(), A[1].slice(), A[2].slice()];
+        const v = b.slice();
+        for (let c = 0; c < 3; c++) {
+          let piv = c;
+          for (let r = c+1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+          if (Math.abs(M[piv][c]) < 1e-12) return null;
+          if (piv !== c) { const t = M[c]; M[c] = M[piv]; M[piv] = t; const tv = v[c]; v[c] = v[piv]; v[piv] = tv; }
+          for (let r = c+1; r < 3; r++) {
+            const f = M[r][c] / M[c][c];
+            for (let k = c; k < 3; k++) M[r][k] -= f * M[c][k];
+            v[r] -= f * v[c];
+          }
+        }
+        const x = [0,0,0];
+        for (let r = 2; r >= 0; r--) {
+          let s = v[r];
+          for (let k = r+1; k < 3; k++) s -= M[r][k] * x[k];
+          x[r] = s / M[r][r];
+        }
+        return x;
+      }
+      function fitCircleLS(pts) {
+        // least squares: 2x*cx + 2y*cy + c = x^2+y^2
+        const AtA = [[0,0,0],[0,0,0],[0,0,0]], Atb = [0,0,0];
+        for (const [x, y] of pts) {
+          const row = [2*x, 2*y, 1], rhs = x*x + y*y;
+          for (let i = 0; i < 3; i++) { Atb[i] += row[i]*rhs; for (let j = 0; j < 3; j++) AtA[i][j] += row[i]*row[j]; }
+        }
+        const sol = solve3(AtA, Atb);
+        if (!sol) return null;
+        const [cx, cy, c] = sol;
+        const r2 = c + cx*cx + cy*cy;
+        if (r2 < 0) return null;
+        return [cx, cy, Math.sqrt(r2)];
+      }
+      function arcSpan(pts, cx, cy) {
+        const ang = pts.map(([x, y]) => ((Math.atan2(y-cy, x-cx) * 180 / Math.PI) % 360 + 360) % 360).sort((a,b)=>a-b);
+        const ext = ang.concat([ang[0] + 360]);
+        let gi = 0, gmax = -1;
+        for (let i = 0; i < ang.length; i++) {
+          const g = ext[i+1] - ext[i];
+          if (g > gmax) { gmax = g; gi = i; }
+        }
+        const a1 = ang[(gi+1) % ang.length];
+        const a2 = ang[gi];
+        let span = (a2 - a1) % 360;
+        if (span === 0) span = 360;
+        if (span < 0) span += 360;
+        return [a1, a2, span];
+      }
+      function fitEllipse(pts, cx, cy, tol) {
+        // axis-aligned ellipse: u*dx^2 + v*dy^2 = 1
+        let Suu=0, Suv=0, Svv=0, Su=0, Sv=0;
+        for (const [x, y] of pts) {
+          const dx = x-cx, dy = y-cy;
+          const a = dx*dx, b = dy*dy;
+          Suu += a*a; Suv += a*b; Svv += b*b; Su += a; Sv += b;
+        }
+        const det = Suu*Svv - Suv*Suv;
+        if (Math.abs(det) < 1e-12) return null;
+        const u = (Su*Svv - Sv*Suv) / det;
+        const v = (Sv*Suu - Su*Suv) / det;
+        if (u <= 0 || v <= 0) return null;
+        const rx = 1/Math.sqrt(u), ry = 1/Math.sqrt(v);
+        if (!(rx >= 2 && rx <= 400 && ry >= 2 && ry <= 400)) return null;
+        let err = 0;
+        for (const [x, y] of pts) {
+          const dx = x-cx, dy = y-cy;
+          const q = Math.max((dx/rx)**2 + (dy/ry)**2, 1e-12);
+          const s = 1/Math.sqrt(q);
+          err = Math.max(err, Math.abs(1-s) * Math.hypot(dx, dy));
+        }
+        return [cx, cy, rx, ry, err];
+      }
+      function perpDist(pt, a, b) {
+        const [ax, ay] = a, [bx, by] = b, [px, py] = pt;
+        const dx = bx-ax, dy = by-ay, L2 = dx*dx + dy*dy;
+        if (L2 === 0) return Math.hypot(px-ax, py-ay);
+        let t = ((px-ax)*dx + (py-ay)*dy) / L2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+      }
+      function dp(pts, eps) {
+        if (pts.length <= 2) return pts.slice();
+        const a = pts[0], b = pts[pts.length-1];
+        let dmax = 0, idx = -1;
+        for (let i = 1; i < pts.length-1; i++) {
+          const d = perpDist(pts[i], a, b);
+          if (d > dmax) { dmax = d; idx = i; }
+        }
+        if (dmax > eps) return dp(pts.slice(0, idx+1), eps).slice(0, -1).concat(dp(pts.slice(idx), eps));
+        return [a, b];
+      }
+      function fitPolygon(pts, tol) {
+        let P = pts.map(p => [p[0], p[1]]);
+        if (P.length >= 2 && P[0][0] === P[P.length-1][0] && P[0][1] === P[P.length-1][1]) P = P.slice(0, -1);
+        if (P.length < 3) return P.map(([x, y]) => ['PSET', x, y]);
+        const closed = P.concat([P[0]]);
+        let simp = dp(closed, tol);
+        if (simp.length >= 2 && simp[0][0] === simp[simp.length-1][0] && simp[0][1] === simp[simp.length-1][1]) simp = simp.slice(0, -1);
+        if (simp.length < 3) {
+          simp = dp(closed, Math.max(0.5, tol/3));
+          if (simp.length >= 2 && simp[0][0] === simp[simp.length-1][0] && simp[0][1] === simp[simp.length-1][1]) simp = simp.slice(0, -1);
+        }
+        if (simp.length < 3) {
+          const step = Math.max(1, Math.floor(P.length / 4));
+          simp = [];
+          for (let i = 0; i < P.length; i += step) simp.push(P[i]);
+          if (simp.length < 3) simp = [P[0], P[Math.floor(P.length/2)], P[P.length-1]];
+        }
+        const cmds = [];
+        for (let i = 0; i < simp.length; i++) {
+          const a = simp[i], b = simp[(i+1) % simp.length];
+          cmds.push(['LINE', a[0], a[1], b[0], b[1]]);
+        }
+        return cmds;
+      }
+      function fitPolyline(pts, tol, minSeg = 4) {
+        const P = pts.map(p => [p[0], p[1]]);
+        if (P.length >= 3) {
+          const a = P[0], b = P[P.length-1];
+          if (Math.abs(a[0]-b[0]) <= 1 && Math.abs(a[1]-b[1]) <= 1) {
+            const circ = fitCircleLS(P);
+            if (circ) {
+              const [cx, cy, r] = circ;
+              if (r >= 1.5 && r <= 300) {
+                let dd = 0;
+                for (const [x, y] of P) dd = Math.max(dd, Math.abs(Math.hypot(x-cx, y-cy) - r));
+                if (dd <= tol) {
+                  const [, , span] = arcSpan(P, cx, cy);
+                  if (span >= 300) return [['CIRCLE', cx, cy, r, null, null, 1]];
+                }
+              }
+              const el = fitEllipse(P, cx, cy, tol);
+              if (el) {
+                const [ecx, ecy, rx, ry, err] = el;
+                if (err <= tol) {
+                  const [, , span] = arcSpan(P, ecx, ecy);
+                  if (span >= 300) return [['CIRCLE', ecx, ecy, rx, null, null, ry/rx]];
+                }
+              }
+            }
+            return fitPolygon(P, tol);
+          }
+        }
+        if (P.length < 2) return P.length === 1 ? [['PSET', P[0][0], P[0][1]]] : [];
+        if (P.length === 2) return [['LINE', P[0][0], P[0][1], P[1][0], P[1][1]]];
+        if (P.length < minSeg) return P.map(([x, y]) => ['PSET', x, y]);
+        const [x1, y1] = P[0], [x2, y2] = P[P.length-1];
+        const d = P.map(([px, py]) => distPointSegment(px, py, x1, y1, x2, y2));
+        const dmax = Math.max(...d);
+        if (dmax <= tol) return [['LINE', x1, y1, x2, y2]];
+        const circ = fitCircleLS(P);
+        if (circ) {
+          const [cx, cy, r] = circ;
+          if (r >= 1.5 && r <= 300) {
+            let dd = 0;
+            for (const [x, y] of P) dd = Math.max(dd, Math.abs(Math.hypot(x-cx, y-cy) - r));
+            if (dd <= tol) {
+              const [a1, a2, span] = arcSpan(P, cx, cy);
+              if (span >= 300) return [['CIRCLE', cx, cy, r, null, null, 1]];
+              return [['CIRCLE', cx, cy, r, a1, a2, 1]];
+            }
+          }
+          const el = fitEllipse(P, cx, cy, tol);
+          if (el) {
+            const [ecx, ecy, rx, ry, err] = el;
+            if (err <= tol) {
+              const [a1, a2, span] = arcSpan(P, ecx, ecy);
+              const aspect = ry / rx;
+              if (span >= 300) return [['CIRCLE', ecx, ecy, rx, null, null, aspect]];
+              return [['CIRCLE', ecx, ecy, rx, a1, a2, aspect]];
+            }
+          }
+        }
+        if (P.length <= minSeg) return P.map(([x, y]) => ['PSET', x, y]);
+        let idx = d.indexOf(dmax);
+        if (idx === 0 || idx === P.length-1) idx = Math.floor(P.length / 2);
+        return fitPolyline(P.slice(0, idx+1), tol, minSeg).concat(fitPolyline(P.slice(idx), tol, minSeg));
+      }
+
+      // ---------- formatting & rasterizing ----------
+      function fmtCmd(c) {
+        if (c[0] === 'LINE') return `LINE (${c[1].toFixed(0)},${c[2].toFixed(0)})-(${c[3].toFixed(0)},${c[4].toFixed(0)})`;
+        if (c[0] === 'CIRCLE') {
+          const [, cx, cy, r, a1, a2, aspect] = c;
+          if (a1 === null && aspect === 1) return `CIRCLE (${cx.toFixed(0)},${cy.toFixed(0)}),${r.toFixed(0)}`;
+          if (a1 === null) return `CIRCLE (${cx.toFixed(0)},${cy.toFixed(0)}),${r.toFixed(0)},,,${aspect.toFixed(2)}`;
+          const r1 = a1 * Math.PI / 180, r2 = a2 * Math.PI / 180;
+          if (aspect === 1) return `CIRCLE (${cx.toFixed(0)},${cy.toFixed(0)}),${r.toFixed(0)},,${r1.toFixed(2)},${r2.toFixed(2)}`;
+          return `CIRCLE (${cx.toFixed(0)},${cy.toFixed(0)}),${r.toFixed(0)},,${r1.toFixed(2)},${r2.toFixed(2)},${aspect.toFixed(2)}`;
+        }
+        return `PSET (${c[1].toFixed(0)},${c[2].toFixed(0)})`;
+      }
+      function rasterizeCmds(cmds) {
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
+        for (const c of cmds) {
+          if (c[0] === 'LINE') {
+            ctx.beginPath(); ctx.moveTo(c[1]+0.5, c[2]+0.5); ctx.lineTo(c[3]+0.5, c[4]+0.5); ctx.stroke();
+          } else if (c[0] === 'CIRCLE') {
+            const [, cx, cy, r, a1, a2, aspect] = c;
+            const ry = r * aspect;
+            ctx.beginPath();
+            if (a1 === null) {
+              ctx.ellipse(cx, cy, r, ry, 0, 0, Math.PI*2);
+              ctx.stroke();
+            } else {
+              let s = a1 * Math.PI / 180, e = a2 * Math.PI / 180;
+              if (e <= s) e += Math.PI*2;
+              ctx.ellipse(cx, cy, r, ry, 0, s, e);
+              ctx.stroke();
+            }
+          } else if (c[0] === 'PSET') {
+            ctx.fillRect(Math.round(c[1]), Math.round(c[2]), 1, 1);
+          }
+        }
+        const d = ctx.getImageData(0, 0, W, H).data;
+        const out = new Uint8Array(W*H);
+        for (let i = 0; i < W*H; i++) out[i] = d[i*4] > 128 ? 1 : 0;
+        return out;
+      }
+      function drawMaskToCanvas(canvas, mask) {
+        // Render the 320x200 mask scaled 2x onto the 640x400 display canvas.
+        const off = document.createElement('canvas');
+        off.width = W; off.height = H;
+        const octx = off.getContext('2d');
+        const img = octx.createImageData(W, H);
+        for (let i = 0; i < W*H; i++) {
+          const v = mask[i] ? 255 : 0;
+          img.data[i*4] = v; img.data[i*4+1] = v; img.data[i*4+2] = v; img.data[i*4+3] = 255;
+        }
+        octx.putImageData(img, 0, 0);
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+      }
+
+      // ---------- main pipeline ----------
+      function cmdMask(c) {
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 1;
+        if (c[0] === 'LINE') {
+          ctx.beginPath(); ctx.moveTo(c[1]+0.5, c[2]+0.5); ctx.lineTo(c[3]+0.5, c[4]+0.5); ctx.stroke();
+        } else if (c[0] === 'CIRCLE') {
+          const [, cx, cy, r, a1, a2, aspect] = c;
+          const ry = r * aspect;
+          ctx.beginPath();
+          if (a1 === null) { ctx.ellipse(cx, cy, r, ry, 0, 0, Math.PI*2); ctx.stroke(); }
+          else {
+            let s = a1 * Math.PI/180, e = a2 * Math.PI/180;
+            if (e <= s) e += Math.PI*2;
+            ctx.ellipse(cx, cy, r, ry, 0, s, e); ctx.stroke();
+          }
+        } else if (c[0] === 'PSET') {
+          ctx.fillRect(Math.round(c[1]), Math.round(c[2]), 1, 1);
+        }
+        const d = ctx.getImageData(0, 0, W, H).data;
+        const out = new Uint8Array(W*H);
+        for (let i = 0; i < W*H; i++) out[i] = d[i*4] > 128 ? 1 : 0;
+        return out;
+      }
+      function polygonRuns(cmds) {
+        const runs = [];
+        let i = 0;
+        while (i < cmds.length) {
+          if (cmds[i][0] !== 'LINE') { i++; continue; }
+          let j = i;
+          while (j+1 < cmds.length && cmds[j+1][0] === 'LINE') {
+            const a = cmds[j], b = cmds[j+1];
+            if (Math.abs(a[3]-b[1]) <= 1 && Math.abs(a[4]-b[2]) <= 1) j++;
+            else break;
+          }
+          if (j > i) {
+            const first = cmds[i], last = cmds[j];
+            if (Math.abs(last[3]-first[1]) <= 1 && Math.abs(last[4]-first[2]) <= 1) runs.push([i, j]);
+          }
+          i = j + 1;
+        }
+        return runs;
+      }
+      function runPipeline() {
+        if (!srcImage) return;
+        const thresh = +$('p-thresh').value;
+        const tol = +$('p-tol').value;
+        const minPath = +$('p-minpath').value;
+        const minLoop = +$('p-minloop').value;
+        const gapMax = +$('p-gap').value;
+        const basic = $('p-basic').value;
+        $('status').textContent = '変換中…';
+        setTimeout(() => {
+          try {
+            const rgba = resizeFit(srcImage);
+            const edge = edgeMaskNMS(rgba, thresh);
+            const nEdge = edge.reduce((s, v) => s + v, 0);
+            let paths = tracePathsStraight(edge);
+            const nPathsRaw = paths.length;
+            let nMerges;
+            [paths, nMerges] = mergeGaps(paths, gapMax);
+            let nDedupPath;
+            [paths, nDedupPath] = dedupPaths(paths);
+            const isClosed = (p) => p.length >= 3 && Math.abs(p[0][0]-p[p.length-1][0]) <= 1 && Math.abs(p[0][1]-p[p.length-1][1]) <= 1;
+            const kept = paths.filter(p => p.length >= minPath || (isClosed(p) && p.length >= minLoop));
+            const nDropped = paths.length - kept.length;
+            kept.sort((a, b) => b.length - a.length);
+            let cmds = [];
+            for (const p of kept) cmds = cmds.concat(fitPolyline(p, tol));
+            // greedy command dedup (polygons first)
+            const runs = polygonRuns(cmds);
+            const inPoly = new Set();
+            for (const [a, b] of runs) for (let k = a; k <= b; k++) inPoly.add(k);
+            const order = cmds.map((_, k) => k).sort((a, b) => (inPoly.has(a) ? 0 : 1) - (inPoly.has(b) ? 0 : 1) || a - b);
+            const covered = new Uint8Array(W*H);
+            const keptIdx = new Set();
+            let nDroppedDup = 0;
+            for (const k of order) {
+              const m = cmdMask(cmds[k]);
+              let total = 0, fresh = 0;
+              for (let i = 0; i < W*H; i++) if (m[i]) { total++; if (!covered[i]) fresh++; }
+              if (total === 0) continue;
+              if (fresh >= 3 && fresh >= 0.25 * total) {
+                keptIdx.add(k);
+                for (let i = 0; i < W*H; i++) if (m[i]) covered[i] = 1;
+              } else nDroppedDup++;
+            }
+            cmds = cmds.filter((_, k) => keptIdx.has(k));
+            const nLine = cmds.filter(c => c[0]==='LINE').length;
+            const nFull = cmds.filter(c => c[0]==='CIRCLE' && c[4]===null && c[6]===1).length;
+            const nArc = cmds.filter(c => c[0]==='CIRCLE' && c[4]!==null && c[6]===1).length;
+            const nEll = cmds.filter(c => c[0]==='CIRCLE' && c[4]===null && c[6]!==1).length;
+            const nEllArc = cmds.filter(c => c[0]==='CIRCLE' && c[4]!==null && c[6]!==1).length;
+            const nPset = cmds.filter(c => c[0]==='PSET').length;
+            const rend = rasterizeCmds(cmds);
+            let inter = 0, rendSum = 0;
+            for (let i = 0; i < W*H; i++) { if (rend[i] && edge[i]) inter++; if (rend[i]) rendSum++; }
+            const cov = (100*inter/Math.max(1,nEdge)).toFixed(1);
+            const prec = (100*inter/Math.max(1,rendSum)).toFixed(1);
+            drawMaskToCanvas($('cv-edge'), edge);
+            drawMaskToCanvas($('cv-cmd'), rend);
+            const header = `' RetroDraw: outline -> drawing commands (${basic} BASIC)\n' CIRCLE angles in radians; aspect = ry/rx (ellipse)\n`;
+            lastBas = header + cmds.map(fmtCmd).join('\n') + '\n';
+            $('bas').textContent = lastBas;
+            $('stats').textContent =
+              `総コマンド数: ${cmds.length}文（PSETだけなら ${nEdge}文の ${(100*cmds.length/Math.max(1,nEdge)).toFixed(1)}%）\n` +
+              `LINE: ${nLine}  CIRCLE(真円): ${nFull}  ARC: ${nArc}  ELLIPSE: ${nEll}  ELL-ARC: ${nEllArc}  PSET: ${nPset}\n` +
+              `再現率: ${cov}%  精度: ${prec}%  （thresh=${thresh}, tol=${tol}, min_path=${minPath}, min_loop=${minLoop}, gap_max=${gapMax}）\n` +
+              `パス: ${nPathsRaw}本 → 橋渡し ${nMerges}回 → 平行重複を ${nDedupPath}本除去 → ${kept.length}本採用（${nDropped}本破棄）→ コマンド重複を ${nDroppedDup}文除去`;
+            $('out-card').hidden = false;
+            $('status').textContent = `完了：${cmds.length}文`;
+          } catch (err) {
+            $('status').textContent = 'エラー：' + err.message;
+          }
+        }, 30);
+      }
+
+      // ---------- UI wiring ----------
+      const SAMPLES = [
+        ['pub', 'パブ', 'assets/sample-pub.jpg'],
+        ['anime', 'アニメ', 'assets/sample-anime.jpg'],
+        ['title', 'タイトル', 'assets/sample-title.jpg'],
+        ['portrait', 'ポートレート', 'assets/sample-portrait.jpg'],
+        ['still', '静物', 'assets/sample-still.jpg'],
+      ];
+      const samplesEl = $('samples');
+      for (const [id, label, url] of SAMPLES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.innerHTML = `<img src="${url}" alt="${label}"><span>${label}</span>`;
+        b.addEventListener('click', () => {
+          document.querySelectorAll('.samples button').forEach(x => x.classList.remove('sel'));
+          b.classList.add('sel');
+          loadImageUrl(url, label);
+        });
+        samplesEl.appendChild(b);
+      }
+      function loadImageUrl(url, name) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => { srcImage = img; lastName = name || 'draw'; $('status').textContent = '画像を読み込みました。「変換する」を押してください。'; runPipeline(); };
+        img.onerror = () => { $('status').textContent = 'サンプル画像を読み込めませんでした。'; };
+        img.src = url;
+      }
+      function loadFile(file) {
+        if (!file || !file.type.startsWith('image/')) return;
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          srcImage = img;
+          lastName = file.name.replace(/\.[^.]+$/, '') || 'draw';
+          document.querySelectorAll('.samples button').forEach(x => x.classList.remove('sel'));
+          $('status').textContent = '画像を読み込みました。「変換する」を押してください。';
+          runPipeline();
+        };
+        img.src = url;
+      }
+      const drop = $('drop');
+      drop.addEventListener('click', () => $('file').click());
+      $('file').addEventListener('change', (e) => loadFile(e.target.files[0]));
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); loadFile(e.dataTransfer.files[0]); });
+      const params = [['p-thresh','v-thresh',v=>v],['p-tol','v-tol',v=>(+v).toFixed(1)],['p-minpath','v-minpath',v=>v],['p-minloop','v-minloop',v=>v],['p-gap','v-gap',v=>v]];
+      for (const [pid, vid, fmt] of params) {
+        $(pid).addEventListener('input', () => { $(vid).textContent = fmt($(pid).value); });
+        $(pid).addEventListener('change', () => { if (srcImage) runPipeline(); });
+      }
+      $('p-basic').addEventListener('change', () => { if (srcImage) runPipeline(); });
+      $('run').addEventListener('click', runPipeline);
+      $('dl').addEventListener('click', () => {
+        if (!lastBas) return;
+        const blob = new Blob([lastBas], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = lastName + '_draw.bas';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+      $('copy').addEventListener('click', async () => {
+        if (!lastBas) return;
+        try { await navigator.clipboard.writeText(lastBas); $('status').textContent = 'プログラムをコピーしました。'; }
+        catch { $('status').textContent = 'コピーできませんでした。'; }
+      });
+    </script>
+  </body>
+</html>
